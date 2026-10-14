@@ -1,0 +1,22 @@
+Lux Watch
+Copyright 2026 the Lux Watch authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Lux Watch is an unofficial, independent project. It is not made, endorsed or
+supported by Meta. "Muse" and Meta are trademarks of Meta Platforms, Inc.
+
+This project builds on Meta's Muse Gadget SDK
+(https://github.com/facebookincubator/muse-gadget-sdk), Copyright (c) Meta
+Platforms, Inc. and affiliates, licensed under the Apache License, Version 2.0:
+
+- docs/PROTOCOL.md describes the gadget protocol as implemented by the SDK's
+  Linux and ESP32 code, which it cites.
+- The test vectors in gadget/src/test/resources/ were produced with the SDK's
+  code and its published vectors (gadget/src/test/resources/README.md,
+  gadget/tools/gen_vectors.py).
+- docs/muse-avatar-prompt.md is adapted from the SDK's
+  esp32/tools/muse/avatar_prompt.md.
+
+The Lux avatar clips (app/src/main/res/raw/) and the Pixel Lux avatar
+(gadget/.../avatar/MusePixel.kt) were made by the author's Muse.

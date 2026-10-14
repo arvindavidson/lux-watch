@@ -1,0 +1,23 @@
+# Local machine SDK path (each dev sets their own in Android Studio)
+local.properties
+
+# Build outputs
+build/
+app/build/
+gadget/build/
+out/
+
+# Gradle
+.gradle/
+gradle-home/
+
+# Host-side verification jars (Gradle fetches these on the build machine)
+libs/
+
+# Android Studio
+.idea/
+*.iml
+
+# OS
+.DS_Store
+.kotlin/
