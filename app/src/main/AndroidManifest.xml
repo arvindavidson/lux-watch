@@ -41,7 +41,8 @@
         <service
             android:name=".LuxTileService"
             android:exported="true"
-            android:label="Lux Talk">
+            android:label="Lux Talk"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
                 <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
             </intent-filter>
