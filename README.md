@@ -1,6 +1,9 @@
 # Lux Watch
 
-A Wear OS app that turns a Samsung Galaxy Watch into a Muse voice gadget.
+A Wear OS app that turns a Samsung Galaxy Watch into a Muse voice gadget: tap
+Lux, talk, and your Muse answers on your wrist.
+
+![Lux Watch: the watch face, the talk screen, a reply and the history page](docs/images/screens.png)
 
 > **Unofficial.** Lux Watch is an independent project, not made, endorsed or
 > supported by Meta. It builds on Meta's open-source
@@ -10,15 +13,25 @@ A Wear OS app that turns a Samsung Galaxy Watch into a Muse voice gadget.
 > Classic. Messages from Muse, avatar import, the face's complications and the
 > hardware video playback are newer and have had little testing on a watch.
 
-**Download:** the APK is on the [Releases](../../releases) page. Install it with
-`adb install -r lux-watch.apk` (see [BUILD.md](BUILD.md) for sideloading and
-pairing).
+## Quick start
 
-**Status:** running on a Galaxy Watch4 Classic (One UI 8 Watch / Wear OS 6):
-pairs with the Muse app over BLE and talks to Muse. The Noise handshake,
-framing and BLE pairing key schedule are checked byte-for-byte against Meta's
-`muse-gadget-sdk` (`./gradlew :gadget:test`; see
-`gadget/src/test/resources/README.md`).
+You need a Galaxy Watch (Wear OS 3 or later), an Android phone with the Muse
+app, a computer with `adb`, and an SDK token from
+[gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens).
+
+1. Download **[lux-watch.apk](https://github.com/arvindavidson/lux-watch/releases/latest/download/lux-watch.apk)**
+   from the [latest release](https://github.com/arvindavidson/lux-watch/releases/latest).
+2. Connect the watch to your computer with adb (Developer options → ADB
+   debugging and Wireless debugging; [BUILD.md §3](BUILD.md#3-enable-sideloading-on-the-watch)),
+   then run `adb install -r lux-watch.apk`.
+3. Open **Lux Watch** on the watch. In the Muse app, add a gadget: the watch
+   shows up, and the Muse app pairs with it over Bluetooth.
+4. On the watch, swipe to **Settings → SDK token** and paste your token (a
+   Galaxy watch lets you type on the phone's keyboard).
+5. Tap Lux and talk. For the watch face: long-press your current face, swipe
+   to the end, tap **+** and pick **Lux**.
+
+[BUILD.md](BUILD.md) has the details, building from source and troubleshooting.
 
 ## How it works
 
@@ -26,8 +39,10 @@ framing and BLE pairing key schedule are checked byte-for-byte against Meta's
    protocol v5 (P-256 ECDH) and provisions device tokens.
 2. **Connect**: the watch fetches its VM list, opens a Noise-secured WebSocket
    (`Noise_XX_25519_AESGCM_SHA256`) and registers over `/link-control`. One
-   connection serves the whole app; it warms up when you raise your wrist and,
-   with Settings → Messages from Muse on, stays up and reconnects on its own.
+   connection serves the whole app. It connects when you open Lux (or raise
+   your wrist, if you used Lux in the last half hour) and closes after a couple
+   of idle minutes; with Settings → Messages from Muse on, it stays up and
+   reconnects on its own.
 3. **Talk**: tap Lux (on the watch face, the tile or the complication), speak,
    and stop: it sends when you stop talking. The 16 kHz recording goes to
    `/chat/stream` as a voice note (as Meta's ESP32 boards send it); the reply
@@ -39,9 +54,10 @@ framing and BLE pairing key schedule are checked byte-for-byte against Meta's
 5. **Avatar**: Lux plays Muse's own avatar clips (background turned black);
    anyone's Muse can send its clips to the watch (Settings → Get my avatar).
    Pixel-art avatars are built in too. See `docs/muse-avatar.md`.
-6. **Watch face**: the time, two complications and the avatar, which animates
-   when you look and while Lux is busy, and otherwise stays still to save
-   battery.
+6. **Watch face**: the time, two complications and the avatar. To save
+   battery the avatar is a still frame unless Lux is listening, thinking or
+   speaking, or a reply or message has just arrived; on the talk screen Lux's
+   clips play through the watch's hardware video decoder.
 
 ## Layout
 
@@ -62,7 +78,10 @@ framing and BLE pairing key schedule are checked byte-for-byte against Meta's
 
 ## Verified
 
-`./gradlew :gadget:test` against vectors from Meta's `muse-gadget-sdk`:
+Runs on a Galaxy Watch4 Classic (One UI 8 Watch / Wear OS 6): pairs with the
+Muse app over BLE and talks to Muse. The Noise handshake, framing and BLE
+pairing key schedule are checked byte-for-byte against Meta's
+`muse-gadget-sdk` (see `gadget/src/test/resources/README.md`):
 
 ```
 PASS ble.community_v5 / official_v5 / community_app_v5 (ecdh, transcript, keys, session id, client_finished record)
@@ -73,8 +92,9 @@ PASS framing.service_frame (78 bytes) / framing.chunk[0] (92 bytes)
 
 ## Features
 
-- Talk screen: tap to talk, sends on silence; reply captions (bezel pages
-  through long ones, and sets the volume while Lux speaks); haptics.
+- Talk screen: tap to talk, sends when you stop speaking; replies shown and read
+  aloud; the bezel sets the volume (with a ring and a haptic tick) and pages
+  through long replies; haptics.
 - History page: recent exchanges and Muse's messages, kept on the watch.
 - Settings: Muse connection, SDK token (typed or pasted on the watch), Messages
   from Muse, voice and speed, volume, haptics, avatar, re-pair.
