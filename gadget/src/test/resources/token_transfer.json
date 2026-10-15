@@ -1,0 +1,17 @@
+{
+  "note": "Made by gadget/tools/token_vector.mjs with docs/token/token-crypto.js (Node WebCrypto)",
+  "watch_priv": "fdf9c05eb26e66d8182a0baee491a049cf00f23cc73471b2d1353b4f969f23db",
+  "watch_pub": "04e2759a4ee24bebb9c39b2132cfc06eaaa869f39038cfb4243b4d1b20c670537ee12076ae3dbeda6504900cd53ed3ad75e65338cac857d97f8a945448737f90af",
+  "token": "mgst_Lux-Watch_test-vector_0123456789abcdefghijw",
+  "message": "04d1546fd425e61978ff2d1f9a072190d3fa538efd6135e7c0bffbf6dfc7f207e1037dd8e1c228126c4b08d5df63b75ea5d022ba2d8d7039de271f68d1d93e974db7685c228ac326363482fb57adcf01df0fbfbef75cb2beeaef192c184f04c3419715c70854bd160aa21d6489dc3e029fbe35cff8b1593e9b713415b448a1c3d2ea7d350f6eb573f6618974cf",
+  "chunks": [
+    "000804d1546fd425e61978ff2d1f9a072190d3fa",
+    "0108538efd6135e7c0bffbf6dfc7f207e1037dd8",
+    "0208e1c228126c4b08d5df63b75ea5d022ba2d8d",
+    "03087039de271f68d1d93e974db7685c228ac326",
+    "0408363482fb57adcf01df0fbfbef75cb2beeaef",
+    "0508192c184f04c3419715c70854bd160aa21d64",
+    "060889dc3e029fbe35cff8b1593e9b713415b448",
+    "0708a1c3d2ea7d350f6eb573f6618974cf"
+  ]
+}

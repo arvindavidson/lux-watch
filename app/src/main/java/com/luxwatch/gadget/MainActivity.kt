@@ -8,7 +8,9 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
@@ -28,6 +30,10 @@ import com.luxwatch.gadget.ui.LuxApp
 import com.luxwatch.gadget.ui.SettingsActions
 import com.luxwatch.gadget.ui.SettingsUi
 import com.luxwatch.gadget.ui.TalkUi
+import com.luxwatch.gadget.ui.TokenActions
+import com.luxwatch.gadget.ui.TokenScreen
+import com.luxwatch.gadget.ui.TokenUi
+import com.luxwatch.gadget.pairing.TokenTransfer
 import com.luxwatch.gadget.voice.Endpointer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -62,6 +68,8 @@ class MainActivity : ComponentActivity() {
         private const val MAX_RECORD_MS = VoiceNote.MAX_SECONDS * 1000L
         private const val ERROR_SHOW_MS = 4_000L
         private const val REPLY_LINGER_MS = 10_000L
+        /** How long Settings → SDK token waits for the phone. */
+        private const val TOKEN_WAIT_MS = 5 * 60_000L
     }
 
     private lateinit var tts: LuxTts
@@ -95,6 +103,12 @@ class MainActivity : ComponentActivity() {
     private var speechRate by mutableStateOf(1f)
     private lateinit var avatars: List<AvatarArt>
     private var avatar by mutableStateOf<AvatarArt?>(null)
+    /** Settings → SDK token is open (null = closed). */
+    private var tokenUi by mutableStateOf<TokenUi?>(null)
+    private var tokenReceiver: TokenReceiver? = null
+    /** Received over Bluetooth, waiting for Save; never logged. */
+    private var pendingToken: String? = null
+    private var tokenTimeout: Job? = null
 
     private var capture: AudioCapture? = null
     private var autoStop: Job? = null
@@ -133,6 +147,83 @@ class MainActivity : ComponentActivity() {
                 applySdkToken(token)
             }
         }
+
+    private val tokenPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            if (results.values.all { it }) {
+                startTokenReceiver()
+            } else {
+                tokenUi = TokenUi(TokenUi.Stage.WAITING, note = "Needs Bluetooth permission: type it instead")
+            }
+        }
+
+    /** Settings → SDK token: wait for the phone's "Send token to watch" page over Bluetooth. */
+    private fun openTokenScreen() {
+        tokenUi = TokenUi(TokenUi.Stage.WAITING)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        tokenTimeout?.cancel()
+        tokenTimeout = scope.launch {
+            delay(TOKEN_WAIT_MS)
+            closeTokenScreen()
+        }
+        val missing = BlePairingServer.requiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) startTokenReceiver() else tokenPermissionLauncher.launch(missing.toTypedArray())
+    }
+
+    private fun startTokenReceiver() {
+        if (tokenUi == null || tokenReceiver != null) return
+        val r = TokenReceiver(
+            this,
+            onReceived = { token ->
+                pendingToken = token
+                tokenUi = TokenUi(TokenUi.Stage.CONFIRM, tail = token.takeLast(4))
+                haptics.reply()
+            },
+            onInvalid = {
+                tokenUi = TokenUi(TokenUi.Stage.WAITING, note = "That didn't come through: send it again")
+            },
+            onError = { message -> tokenUi = tokenUi?.copy(note = "$message: type it instead") },
+        )
+        try {
+            r.start()
+            tokenReceiver = r
+        } catch (e: Exception) {
+            r.stop()
+            tokenUi = tokenUi?.copy(note = "${e.message ?: "Bluetooth error"}: type it instead")
+        }
+    }
+
+    private fun saveReceivedToken() {
+        val token = pendingToken ?: return
+        pendingToken = null
+        applySdkToken(token)
+        tokenReceiver?.status = TokenTransfer.Status.SAVED
+        tokenUi = TokenUi(TokenUi.Stage.SAVED)
+        tokenTimeout?.cancel()
+        // Long enough for the page to read "saved".
+        tokenTimeout = scope.launch {
+            delay(3_000)
+            closeTokenScreen()
+        }
+    }
+
+    private fun rejectReceivedToken() {
+        pendingToken = null
+        tokenReceiver?.status = TokenTransfer.Status.CANCELLED
+        tokenUi = TokenUi(TokenUi.Stage.WAITING)
+    }
+
+    private fun closeTokenScreen() {
+        tokenTimeout?.cancel()
+        tokenTimeout = null
+        tokenReceiver?.stop()
+        tokenReceiver = null
+        pendingToken = null
+        tokenUi = null
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
 
     /** Asks for the SDK token on the watch: type it, or paste it with the phone's keyboard. */
     private fun requestTokenInput() {
@@ -189,7 +280,22 @@ class MainActivity : ComponentActivity() {
         LuxStatus.happyAt = { happyAt }
         setContent {
             MaterialTheme {
-                LuxApp(
+                val token = tokenUi
+                BackHandler(enabled = token != null) { closeTokenScreen() }
+                if (token != null) {
+                    TokenScreen(
+                        token,
+                        TokenActions(
+                            onSave = ::saveReceivedToken,
+                            onReject = ::rejectReceivedToken,
+                            onTypeInstead = {
+                                closeTokenScreen()
+                                requestTokenInput()
+                            },
+                            onClose = ::closeTokenScreen,
+                        ),
+                    )
+                } else LuxApp(
                     talk = talkUi(),
                     avatar = avatar ?: avatars.first(),
                     settings = SettingsUi(
@@ -212,7 +318,7 @@ class MainActivity : ComponentActivity() {
                         onVolumeUp = { adjustVolume(AudioManager.ADJUST_RAISE) },
                         onHaptics = { on -> haptics.enabled = on; hapticsOn = on },
                         onRepair = ::repair,
-                        onSetToken = ::requestTokenInput,
+                        onSetToken = ::openTokenScreen,
                         onGetAvatar = ::askMuseForAvatar,
                         onNextVoice = {
                             tts.nextVoice()
@@ -371,6 +477,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        closeTokenScreen() // stop advertising when the watch goes dark
         LuxRuntime.markUsed() // a talk just now: the next wrist raise warms up
         LuxRuntime.coolDown(this)
     }
@@ -767,6 +874,7 @@ class MainActivity : ComponentActivity() {
         scope.cancel()
         capture?.stop()
         pairingServer?.stop()
+        tokenReceiver?.stop()
         tts.shutdown()
         super.onDestroy()
     }

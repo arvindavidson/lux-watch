@@ -226,7 +226,7 @@ object PairingCrypto {
     }
 
     /** HKDF-SHA256 extract+expand (matches cryptography's HKDF). */
-    private fun hkdf(salt: ByteArray, ikm: ByteArray, info: ByteArray, length: Int): ByteArray =
+    internal fun hkdf(salt: ByteArray, ikm: ByteArray, info: ByteArray, length: Int): ByteArray =
         hkdfExpand(hmacSha256(salt, ikm), info, length)
 
     /** HKDF-SHA256 expand-only (matches cryptography's HKDFExpand). */

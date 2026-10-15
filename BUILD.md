@@ -98,11 +98,23 @@ Swipe between three pages: **Talk**, **History** and **Settings**.
 
 ## Entering the gadget token (mgst_…)
 
-Get a token at **gadgets.muse.ai/settings/sdk-tokens**. Then either:
+Get a token at **gadgets.muse.ai/settings/sdk-tokens**. Then one of:
 
-- **On the watch**: Settings → **SDK token**. The watch's text input opens; on
-  a Galaxy watch you can choose to type on the phone, and paste the token
-  there. The watch picks the token out of whatever you paste.
+- **From your phone (easiest)**: on the watch, Settings → **SDK token** shows
+  a QR code for the [Send token to watch](https://arvindavidson.github.io/lux-watch/token/)
+  page. Open it in Chrome on your Android phone, paste the token, tap **Send**
+  and pick the watch. The watch shows the token's last four characters; tap
+  **Save** if they match the phone. The page and the watch agree a key
+  (P-256 ECDH, the same kind of protection as the Muse app's own Bluetooth
+  pairing) and the token travels AES-GCM encrypted; the watch only listens
+  while that screen is open (at most 5 minutes). Protocol:
+  `gadget/.../pairing/TokenTransfer.kt`; page: `docs/token/`, served by
+  GitHub Pages (repo Settings → Pages → branch `main`, folder `/docs`). A
+  fork serves its own copy and changes `TOKEN_PAGE_URL` in `ui/TokenScreen.kt`.
+- **Typed on the watch**: on that screen, **Type it instead**. The watch's
+  text input opens; on a Galaxy watch you can choose to type on the phone,
+  and paste the token there. The watch picks the token out of whatever you
+  paste.
 - **With adb** (debug builds only; watch connected, before pairing):
 
   ```bash

@@ -117,4 +117,14 @@ class ScreenshotTest {
             SettingsActions({}, {}, {}, {}, {}),
         )
     }
+
+    private val tokenActions = TokenActions(onSave = {}, onReject = {}, onTypeInstead = {}, onClose = {})
+
+    @Test fun tokenWaiting() = shoot("10-token-waiting") {
+        TokenScreen(TokenUi(TokenUi.Stage.WAITING), tokenActions)
+    }
+
+    @Test fun tokenConfirm() = shoot("11-token-confirm") {
+        TokenScreen(TokenUi(TokenUi.Stage.CONFIRM, tail = "k8Qw"), tokenActions)
+    }
 }

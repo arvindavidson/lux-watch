@@ -83,6 +83,8 @@ dependencies {
     implementation("androidx.wear.watchface:watchface-complications-rendering:1.2.0")
     implementation("androidx.wear.watchface:watchface-editor:1.2.0")
     implementation("androidx.wear:wear-input:1.1.0")
+    // QR code for the "Send token to watch" page (encoder only after R8).
+    implementation("com.google.zxing:core:3.5.3")
 
     // Encrypted storage for identity.json / pairing.json equivalents
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

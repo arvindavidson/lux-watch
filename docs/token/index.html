@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send token to watch</title>
+<meta name="description" content="Send your Muse SDK token to Lux Watch over Bluetooth.">
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --text: #1d1c1a; --muted: #6b6862;
+    --line: #e2dfd8; --accent: #d9622b; --accent-text: #ffffff;
+    --ok: #2f7d4f; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121110; --card: #1d1c1a; --text: #f1efe9; --muted: #a29f97;
+      --line: #34322e; --accent: #f08a4b; --accent-text: #1d1c1a;
+      --ok: #7fd19b; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 440px; margin: 0 auto; padding: 28px 16px 40px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 24px; }
+  ol { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+  li {
+    counter-increment: step; background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px 16px 16px 56px; margin-bottom: 12px; position: relative;
+  }
+  li::before {
+    content: counter(step); position: absolute; left: 16px; top: 16px;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-text);
+    font-weight: 700; font-size: .9rem; display: grid; place-items: center;
+  }
+  li p { margin: 0 0 10px; }
+  li p:last-child { margin-bottom: 0; }
+  a { color: var(--accent); }
+  .row { display: flex; gap: 8px; }
+  input {
+    flex: 1; min-width: 0; font: 15px ui-monospace, Menlo, Consolas, monospace;
+    padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 16px; cursor: pointer;
+  }
+  .secondary { background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+  .primary { width: 100%; background: var(--accent); color: var(--accent-text); padding: 14px; font-size: 1.05rem; }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { font-size: .85rem; color: var(--muted); }
+  #status { min-height: 1.5em; margin: 14px 2px 0; font-weight: 600; }
+  #status.ok { color: var(--ok); }
+  #status.bad { color: var(--bad); }
+  .tail { font: 700 1.6rem ui-monospace, Menlo, Consolas, monospace; letter-spacing: .08em; }
+  footer { margin-top: 28px; font-size: .8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Send token to watch</h1>
+  <p class="lede">Puts your Muse SDK token on Lux Watch over Bluetooth, so you don't have to type it on the watch.</p>
+
+  <ol>
+    <li>
+      <p>On the watch, open <b>Lux Watch → Settings → SDK token</b>. Leave it on that screen.</p>
+    </li>
+    <li>
+      <p>Copy your token from <a href="https://gadgets.muse.ai/settings/sdk-tokens" target="_blank" rel="noopener">gadgets.muse.ai</a> and paste it here.</p>
+      <div class="row">
+        <input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="mgst_…" aria-label="SDK token">
+        <button id="paste" class="secondary" type="button">Paste</button>
+      </div>
+    </li>
+    <li>
+      <p>Tap Send, then pick your watch.</p>
+      <button id="send" class="primary" type="button">Send to watch</button>
+      <div id="status" role="status" aria-live="polite"></div>
+    </li>
+  </ol>
+
+  <footer>
+    The token goes straight from this phone to the watch, encrypted. This page doesn't store it or send it anywhere else.
+    Needs Chrome on Android. <a href="https://github.com/arvindavidson/lux-watch">Lux Watch</a> is unofficial and not made by Meta.
+  </footer>
+</main>
+
+<script type="module">
+import { SERVICE_UUID, KEY_UUID, TOKEN_UUID, STATUS_UUID, findToken, sealToken, chunks } from "./token-crypto.js";
+
+const input = document.getElementById("token");
+const send = document.getElementById("send");
+const paste = document.getElementById("paste");
+const statusEl = document.getElementById("status");
+
+function show(html, kind = "") {
+  statusEl.innerHTML = html;
+  statusEl.className = kind;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+if (!navigator.bluetooth) {
+  send.disabled = true;
+  show("This browser can't use Bluetooth. Open this page in <b>Chrome on Android</b>.", "bad");
+}
+
+if (!navigator.clipboard?.readText) paste.hidden = true;
+paste.addEventListener("click", async () => {
+  try {
+    input.value = (await navigator.clipboard.readText()).trim();
+  } catch {
+    input.focus();
+  }
+});
+
+send.addEventListener("click", async () => {
+  const token = findToken(input.value);
+  if (!token) {
+    show("That doesn't look like an SDK token. It starts with <b>mgst_</b>; copy it again.", "bad");
+    return;
+  }
+  send.disabled = true;
+  let device;
+  try {
+    show("Pick your watch…");
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
+    show("Connecting…");
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    const keyChar = await service.getCharacteristic(KEY_UUID);
+    const tokenChar = await service.getCharacteristic(TOKEN_UUID);
+    const statusChar = await service.getCharacteristic(STATUS_UUID);
+
+    const watchPub = new Uint8Array((await keyChar.readValue()).buffer);
+    const message = await sealToken(watchPub, token);
+    show("Sending…");
+    for (const part of chunks(message)) {
+      await (tokenChar.writeValueWithResponse ? tokenChar.writeValueWithResponse(part) : tokenChar.writeValue(part));
+    }
+
+    const tail = token.slice(-4);
+    const deadline = Date.now() + 90_000;
+    let asked = false;
+    while (Date.now() < deadline) {
+      const state = new TextDecoder().decode(await statusChar.readValue());
+      if (state === "confirm" && !asked) {
+        asked = true;
+        show(`On the watch, check it shows <span class="tail">${tail}</span> and tap <b>Save</b>.`);
+      } else if (state === "saved") {
+        input.value = "";
+        show("Saved on the watch. You can close this page.", "ok");
+        return;
+      } else if (state === "cancelled") {
+        show("You tapped No on the watch. Check the token and send it again.", "bad");
+        return;
+      } else if (state === "invalid") {
+        show("The watch couldn't read it. Send it again.", "bad");
+        return;
+      }
+      await sleep(600);
+    }
+    show("No answer from the watch. Is Settings → SDK token still open?", "bad");
+  } catch (e) {
+    if (e?.name === "NotFoundError") {
+      show("No watch picked. Make sure Settings → SDK token is open on the watch, then try again.", "bad");
+    } else {
+      show(`Couldn't reach the watch (${e?.message || e}). Keep it close and try again.`, "bad");
+    }
+  } finally {
+    send.disabled = !navigator.bluetooth;
+    try { device?.gatt?.disconnect(); } catch {}
+  }
+});
+</script>
+</body>
+</html>

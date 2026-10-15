@@ -91,7 +91,7 @@ class SettingsActions(
     val onVolumeUp: () -> Unit,
     val onHaptics: (Boolean) -> Unit,
     val onRepair: () -> Unit,
-    /** Opens the watch's text input (on a Galaxy watch it can use the phone's keyboard). */
+    /** Opens the token screen: sent from the phone's browser, or typed. */
     val onSetToken: () -> Unit = {},
     val onMuseMessages: (Boolean) -> Unit = {},
     val onNextVoice: () -> Unit = {},
@@ -422,7 +422,7 @@ fun SettingsPage(ui: SettingsUi, actions: SettingsActions) {
             Chip(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("SDK token") },
-                secondaryLabel = { Text(if (ui.tokenSet) "Set \u2014 tap to change" else "Tap to enter it") },
+                secondaryLabel = { Text(if (ui.tokenSet) "Set \u2014 tap to change" else "Tap to send it from your phone") },
                 onClick = actions.onSetToken,
                 colors = ChipDefaults.secondaryChipColors(),
             )

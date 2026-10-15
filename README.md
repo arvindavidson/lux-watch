@@ -26,8 +26,10 @@ app, a computer with `adb`, and an SDK token from
    then run `adb install -r lux-watch.apk`.
 3. Open **Lux Watch** on the watch. In the Muse app, add a gadget: the watch
    shows up, and the Muse app pairs with it over Bluetooth.
-4. On the watch, swipe to **Settings → SDK token** and paste your token (a
-   Galaxy watch lets you type on the phone's keyboard).
+4. On the watch, swipe to **Settings → SDK token**: it shows a QR code. Scan
+   it with your phone, paste your token on the page that opens and tap
+   **Send** (Chrome on Android); the watch asks you to confirm. Or tap **Type
+   it instead** (a Galaxy watch lets you paste with the phone's keyboard).
 5. Tap Lux and talk. For the watch face: long-press your current face, swipe
    to the end, tap **+** and pick **Lux**.
 
@@ -73,6 +75,8 @@ app, a computer with `adb`, and an SDK token from
   complication, BLE pairing server, encrypted storage, the shared connection,
   Muse's commands, avatar clips and import, TTS. Screenshot tests:
   `./gradlew :app:testDebugUnitTest` (images in `app/build/screens/`).
+- `docs/token/` — the "Send token to watch" page (GitHub Pages), which sends
+  the SDK token to the watch over Web Bluetooth.
 - `BUILD.md` — build, sideload, and pairing instructions.
 - `docs/muse-avatar.md` — putting your Muse's own avatar on the watch.
 
