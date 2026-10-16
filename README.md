@@ -10,20 +10,28 @@ Lux, talk, and your Muse answers on your wrist.
 > [Muse Gadget SDK](https://github.com/facebookincubator/muse-gadget-sdk).
 >
 > **Beta.** Talking to Muse, pairing and the watch face run on a Galaxy Watch4
-> Classic. Messages from Muse, avatar import, the face's complications and the
-> hardware video playback are newer and have had little testing on a watch.
+> Classic. Messages from Muse, avatar import, the face's complications, the
+> hardware video playback and sending the token from the phone are newer and
+> have had little testing on a watch.
 
 ## Quick start
 
 You need a Galaxy Watch (Wear OS 3 or later), an Android phone with the Muse
-app, a computer with `adb`, and an SDK token from
-[gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens).
+app, and an SDK token from
+[gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens). To install the
+app you need `adb` on a computer, or an adb app on the phone (below).
 
 1. Download **[lux-watch.apk](https://github.com/arvindavidson/lux-watch/releases/latest/download/lux-watch.apk)**
    from the [latest release](https://github.com/arvindavidson/lux-watch/releases/latest).
 2. Connect the watch to your computer with adb (Developer options → ADB
    debugging and Wireless debugging; [BUILD.md §3](BUILD.md#3-enable-sideloading-on-the-watch)),
    then run `adb install -r lux-watch.apk`.
+
+   **No computer?** A phone app that does adb over Wi-Fi, such as Wear
+   Installer 2 or Bugjaeger, can install it instead: on the watch, Developer
+   options → Wireless debugging → Pair new device, enter the code and address
+   it shows in the phone app, then install `lux-watch.apk` downloaded on the
+   phone. (Not tested with Lux Watch yet.)
 3. Open **Lux Watch** on the watch. In the Muse app, add a gadget: the watch
    shows up, and the Muse app pairs with it over Bluetooth.
 4. On the watch, swipe to **Settings → SDK token**: it shows a QR code. Scan
@@ -100,7 +108,7 @@ PASS framing.service_frame (78 bytes) / framing.chunk[0] (92 bytes)
   aloud; the bezel sets the volume (with a ring and a haptic tick) and pages
   through long replies; haptics.
 - History page: recent exchanges and Muse's messages, kept on the watch.
-- Settings: Muse connection, SDK token (typed or pasted on the watch), Messages
+- Settings: Muse connection, SDK token (sent from the phone, or typed), Messages
   from Muse, voice and speed, volume, haptics, avatar, re-pair.
 - Lux watch face with complications and a Customize screen; tile; complication.
 
