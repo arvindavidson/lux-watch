@@ -11,8 +11,9 @@ Lux, talk, and your Muse answers on your wrist.
 >
 > **Beta.** Talking to Muse, pairing and the watch face run on a Galaxy Watch4
 > Classic. Messages from Muse, avatar import, the face's complications, the
-> hardware video playback and sending the token from the phone are newer and
-> have had little testing on a watch.
+> hardware video playback, sending the token from the phone, Muse's voice,
+> live calls and pictures from Muse are newer and have had little or no
+> testing on a watch.
 
 ## Quick start
 
@@ -32,12 +33,14 @@ app you need `adb` on a computer, or an adb app on the phone (below).
    options → Wireless debugging → Pair new device, enter the code and address
    it shows in the phone app, then install `lux-watch.apk` downloaded on the
    phone. (Not tested with Lux Watch yet.)
-3. Open **Lux Watch** on the watch. In the Muse app, add a gadget: the watch
-   shows up, and the Muse app pairs with it over Bluetooth.
-4. On the watch, swipe to **Settings → SDK token**: it shows a QR code. Scan
-   it with your phone, paste your token on the page that opens and tap
-   **Send** (Chrome on Android); the watch asks you to confirm. Or tap **Type
-   it instead** (a Galaxy watch lets you paste with the phone's keyboard).
+3. Open **Lux Watch** on the watch and swipe to **Settings → SDK token**: it
+   shows a QR code. Scan it with your phone, paste your token on the page that
+   opens and tap **Send** (Chrome on Android); the watch asks you to confirm.
+   Or tap **Type it instead** (a Galaxy watch lets you paste with the phone's
+   keyboard). Do this before pairing: Muse records the token only when the
+   watch pairs, so a token changed later needs **Re-pair watch**.
+4. In the Muse app, add a gadget: the watch shows up, and the Muse app pairs
+   with it over Bluetooth.
 5. Tap Lux and talk. For the watch face: long-press your current face, swipe
    to the end, tap **+** and pick **Lux**.
 
@@ -61,7 +64,9 @@ app you need `adb` on a computer, or an adb app on the phone (below).
    while Muse is still writing the rest. From the face, Lux returns to the face after.
 4. **Muse can reach the watch**: it offers Muse commands in `link.register`
    (`watch.notify` for reminders and messages, `device.health`,
-   `avatar.set_clips`) and answers `link.invoke`.
+   `avatar.set_clips`, and `display.draw_file` / `display.draw_url` to show a
+   picture) and answers `link.invoke`. Files on Muse's computer are read over
+   the same encrypted connection (`GET /fs/raw/…`), so no public links are needed.
 5. **Avatar**: Lux plays Muse's own avatar clips (background turned black);
    anyone's Muse can send its clips to the watch (Settings → Get my avatar).
    Pixel-art avatars are built in too. See `docs/muse-avatar.md`.
@@ -108,9 +113,17 @@ PASS framing.service_frame (78 bytes) / framing.chunk[0] (92 bytes)
 - Talk screen: tap to talk, sends when you stop speaking; replies shown and read
   aloud; the bezel sets the volume (with a ring and a haptic tick) and pages
   through long replies; haptics.
+- Muse's own voice (Settings → Voice): replies streamed as speech from Muse;
+  or one of the watch's voices, which start at the first sentence.
+- Live calls (Settings → Live calls, beta): tap Lux to call Muse. The mic
+  streams live and Muse answers in its voice as it thinks; tap to interrupt it,
+  tap again to hang up. A port of the SDK's realtime voice (an `mcu-wearable`
+  call on a second Noise connection).
+- Pictures from Muse (`display.draw_file`, `display.draw_url`), full screen.
 - History page: recent exchanges and Muse's messages, kept on the watch.
 - Settings: Muse connection, SDK token (sent from the phone, or typed), Messages
-  from Muse, voice and speed, volume, haptics, avatar, re-pair.
+  from Muse, voice and speed, live calls, own chat in Muse (a side chat for
+  the watch's talks), volume, haptics, avatar, re-pair.
 - Lux watch face with complications and a Customize screen; tile; complication.
 
 ## Open risks
@@ -120,8 +133,11 @@ PASS framing.service_frame (78 bytes) / framing.chunk[0] (92 bytes)
   required); sideloading still works on the Watch4 Classic today.
 - Messages from Muse need the link up: the process stays alive while Lux is the
   watch face; with another face, Android may stop it in the background.
-- Whether Muse can give HTTPS links to its avatar clips for `avatar.set_clips`
-  is untested.
+- Avatar import and pictures from Muse are untested on a watch: they depend on
+  Muse calling the commands (or putting file paths in its reply).
+- Muse's voice, live calls and the own chat follow the SDK's October 2026
+  additions (realtime voice is experimental there too) and are tested only
+  against fakes so far, not against Muse on a watch.
 - `noise_host` vs `vm_ws_url` domain: the pairing record is authoritative.
 
 ## License

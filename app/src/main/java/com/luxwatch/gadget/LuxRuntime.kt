@@ -175,6 +175,16 @@ object LuxRuntime {
     /** Set by the watch face: redraw now (it otherwise redraws once a minute while still). */
     var onFaceNudge: (() -> Unit)? = null
 
+    /** Set by the talk screen while it's showing: shows a picture from Muse, true if it did. */
+    var onImage: ((android.graphics.Bitmap, String?) -> Boolean)? = null
+
+    /** A picture from Muse (display.draw_file / draw_url). Returns true if the talk screen showed it. */
+    fun deliverImage(bitmap: android.graphics.Bitmap, caption: String?): Boolean {
+        messageAt = SystemClock.elapsedRealtime()
+        onFaceNudge?.invoke()
+        return onImage?.invoke(bitmap, caption) == true
+    }
+
     /** A message from Muse (watch.notify). Returns true if the talk screen showed it. */
     fun deliverMessage(title: String, text: String, speak: Boolean): Boolean {
         messageAt = SystemClock.elapsedRealtime()

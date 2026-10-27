@@ -17,9 +17,21 @@ object VoiceNote {
     /** Muse stops listening to a note after 15 s. */
     const val MAX_SECONDS = 15
 
-    private const val HEAD =
-        "{\"message\":\"\",\"output_modality\":\"text\",\"items\":[{\"type\":\"file\"," +
+    private fun head(modality: String, to: Route) =
+        "{\"message\":\"\",\"output_modality\":\"$modality\"${to.fields()},\"items\":[{\"type\":\"file\"," +
             "\"mime_type\":\"audio/wav\",\"filename\":\"voice_note.wav\",\"data_base64\":\""
+
+    /**
+     * Who a turn is from and which chat it goes to (link_client.py send_chat):
+     * [deviceId] (the node id) makes Muse attribute the turn to this gadget and
+     * route follow-up commands to it; [sessionId] picks a side chat (one Muse
+     * hasn't seen starts it), null the main chat.
+     */
+    data class Route(val deviceId: String? = null, val sessionId: String? = null) {
+        internal fun fields(): String =
+            (deviceId?.let { ",\"device_id\":${Json.escape(it)}" } ?: "") +
+                (sessionId?.let { ",\"session_id\":${Json.escape(it)}" } ?: "")
+    }
     private const val TAIL = "\"}]}"
 
     fun durationMs(pcm: ByteArray, sampleRate: Int): Long = pcm.size / 2 * 1000L / sampleRate
@@ -44,11 +56,17 @@ object VoiceNote {
         return out.toByteArray()
     }
 
-    /** The full /chat/stream JSON body for a voice note. */
-    fun body(pcm: ByteArray, sampleRate: Int): ByteArray =
-        (HEAD + Base64.getEncoder().encodeToString(wav(pcm, sampleRate)) + TAIL).toByteArray()
+    /**
+     * The full /chat/stream JSON body for a voice note. [modality] "voice" asks
+     * Muse for a reply it can speak (fetched with MuseSession.streamTts).
+     */
+    fun body(pcm: ByteArray, sampleRate: Int, modality: String = TEXT, to: Route = Route()): ByteArray =
+        (head(modality, to) + Base64.getEncoder().encodeToString(wav(pcm, sampleRate)) + TAIL).toByteArray()
 
     /** A typed turn's body (same reply path, no attachment). */
-    fun textBody(text: String): ByteArray =
-        "{\"message\":${Json.escape(text)},\"output_modality\":\"text\"}".toByteArray()
+    fun textBody(text: String, modality: String = TEXT, to: Route = Route()): ByteArray =
+        "{\"message\":${Json.escape(text)},\"output_modality\":\"$modality\"${to.fields()}}".toByteArray()
+
+    const val TEXT = "text"
+    const val VOICE = "voice"
 }

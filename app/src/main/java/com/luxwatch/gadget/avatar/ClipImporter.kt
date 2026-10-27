@@ -21,7 +21,11 @@ import kotlin.math.min
  * square at 256 px, turns the background black ([BackgroundKey]) and stores
  * them as JPEG frames under files/avatar_muse/, played by [FrameClipArt].
  */
-class ClipImporter(private val context: Context) {
+class ClipImporter(
+    private val context: Context,
+    /** Reads a file from Muse's VM over the watch's own connection (path, size cap). */
+    private val readVmFile: (suspend (String, Long) -> ByteArray)? = null,
+) {
     companion object {
         const val SIZE = 256 // the size the watch face draws an avatar at
         const val DIR = "avatar_muse"
@@ -32,6 +36,9 @@ class ClipImporter(private val context: Context) {
         private const val BATCH = 12
         private const val TAG = "ClipImporter"
         private val lock = Mutex()
+
+        /** An absolute path on Muse's VM (not a link). */
+        fun isVmPath(s: String) = s.startsWith("/") && !s.startsWith("//") && ".." !in s.split('/')
     }
 
     class ImportError(message: String) : Exception(message)
@@ -42,20 +49,23 @@ class ClipImporter(private val context: Context) {
         .build()
 
     /**
-     * Downloads the clips ([urls]: state → https link; idle required) to the
-     * cache. Quick, so bad links are reported to Muse in its answer.
+     * Downloads the clips ([urls]: state → https link, or the path of a file on
+     * Muse's VM; idle required) to the cache. Quick, so bad links are reported
+     * to Muse in its answer.
      */
     suspend fun fetch(urls: Map<String, String>): Map<String, File> = withContext(Dispatchers.IO) {
         if (urls["idle"] == null) throw ImportError("idle is required")
         for ((state, url) in urls) {
-            if (!url.startsWith("https://")) throw ImportError("$state: only https:// links work")
+            if (!url.startsWith("https://") && !isVmPath(url)) {
+                throw ImportError("$state: give an https:// link or the path of a file on your computer")
+            }
         }
         val files = linkedMapOf<String, File>()
         try {
             for ((state, url) in urls) {
                 val f = File.createTempFile("clip_$state", ".mp4", context.cacheDir)
                 files[state] = f
-                download(state, url, f)
+                if (url.startsWith("https://")) download(state, url, f) else readFromVm(state, url, f)
             }
             files
         } catch (e: Exception) {
@@ -120,6 +130,16 @@ class ClipImporter(private val context: Context) {
         } finally {
             retriever.release()
         }
+    }
+
+    private suspend fun readFromVm(state: String, path: String, to: File) {
+        val read = readVmFile ?: throw ImportError("$state: not connected to Muse")
+        val bytes = try {
+            read(path, MAX_BYTES)
+        } catch (e: Exception) {
+            throw ImportError("$state: couldn't read $path (${e.message})")
+        }
+        to.writeBytes(bytes)
     }
 
     private fun download(state: String, url: String, to: File) {

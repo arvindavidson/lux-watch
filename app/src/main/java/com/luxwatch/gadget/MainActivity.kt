@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.MaterialTheme
 import com.luxwatch.gadget.avatar.AvatarMode
@@ -58,16 +59,21 @@ class MainActivity : ComponentActivity() {
         private const val RETURN_TO_FACE_MS = 3_000L
         private const val KEY_TOKEN_INPUT = "sdk_token"
         private const val AVATAR_REQUEST =
-            "Please put your avatar on my watch: use this watch's avatar.set_clips command with HTTPS " +
-                "links to your avatar video clips (idle, plus any of listening, thinking, speaking, happy " +
-                "and error that you have) and your name. If you can't run the command, reply with only " +
-                "the links instead, one per line as \"state: https://link\", using those state names, " +
-                "and a line \"name: your name\"; the watch will fetch them itself."
+            "Please put your avatar on my watch: use this watch's avatar.set_clips command with your " +
+                "avatar video clips (idle, plus any of listening, thinking, speaking, happy and error that " +
+                "you have) and your name. For each clip give the path of the video file on your computer " +
+                "(the watch reads it over its connection to you) or an HTTPS link. If you can't run the " +
+                "command, reply with only those instead, one per line as \"state: /path/to/clip.mp4\" " +
+                "or \"state: https://link\", using those state names, and a line \"name: your name\"; " +
+                "the watch will fetch them itself."
 
         /** Muse stops listening to a voice note after 15 s, so stop and send there. */
         private const val MAX_RECORD_MS = VoiceNote.MAX_SECONDS * 1000L
         private const val ERROR_SHOW_MS = 4_000L
         private const val REPLY_LINGER_MS = 10_000L
+        private const val PREF_LIVE_CALLS = "live_calls"
+        /** How long a picture from Muse stays up unless tapped away. */
+        private const val PICTURE_SHOW_MS = 60_000L
         /** How long Settings → SDK token waits for the phone. */
         private const val TOKEN_WAIT_MS = 5 * 60_000L
     }
@@ -87,6 +93,8 @@ class MainActivity : ComponentActivity() {
     private var unpairedNote by mutableStateOf<String?>(null)
     private var linkState by mutableStateOf<GadgetConnection.State>(GadgetConnection.State.NotPaired)
     private var tokenSet by mutableStateOf(false)
+    /** The SDK token changed since pairing: it takes effect after pairing again. */
+    private var tokenNeedsRepair by mutableStateOf(false)
     private var tokenNote by mutableStateOf<String?>(null)
     private var heard by mutableStateOf<String?>(null)
     private var reply by mutableStateOf<String?>(null)
@@ -94,6 +102,13 @@ class MainActivity : ComponentActivity() {
     private var hapticsOn by mutableStateOf(true)
     private var happyAt by mutableLongStateOf(0L)
     private var museMessages by mutableStateOf(false)
+    private var ownChat by mutableStateOf(false)
+    /** Settings → Live calls: tapping Lux calls Muse instead of sending a voice message. */
+    private var liveCalls by mutableStateOf(false)
+    /** A live call is on (connecting, listening or Muse speaking). */
+    private var inCall by mutableStateOf(false)
+    private var luxCall: LuxCall? = null
+    private var callJob: Job? = null
     private var showTalk by mutableStateOf(0)
     private var history by mutableStateOf<List<ConversationLog.Entry>>(emptyList())
     private var volume by mutableStateOf(0)
@@ -103,6 +118,10 @@ class MainActivity : ComponentActivity() {
     private var speechRate by mutableStateOf(1f)
     private lateinit var avatars: List<AvatarArt>
     private var avatar by mutableStateOf<AvatarArt?>(null)
+    /** A picture from Muse on screen (display.draw_file / draw_url), with its caption. */
+    private var picture by mutableStateOf<Pair<androidx.compose.ui.graphics.ImageBitmap, String?>?>(null)
+    private var clearPicture: Job? = null
+
     /** Settings → SDK token is open (null = closed). */
     private var tokenUi by mutableStateOf<TokenUi?>(null)
     private var tokenReceiver: TokenReceiver? = null
@@ -132,7 +151,8 @@ class MainActivity : ComponentActivity() {
 
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startListening() else showError("Microphone permission needed")
+            if (!granted) showError("Microphone permission needed")
+            else if (liveCalls) startCall() else startListening()
         }
 
     private val tokenInputLauncher =
@@ -256,6 +276,8 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("lux_prefs", MODE_PRIVATE)
         avatars = AvatarCatalog.all(this)
         museMessages = LuxRuntime.stayConnected(this)
+        ownChat = storage.ownChat
+        liveCalls = prefs.getBoolean(PREF_LIVE_CALLS, false)
         // Muse's messages arrive as notifications while Lux isn't open.
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -281,8 +303,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 val token = tokenUi
+                val shown = picture
                 BackHandler(enabled = token != null) { closeTokenScreen() }
-                if (token != null) {
+                BackHandler(enabled = shown != null) { closePicture() }
+                if (shown != null) {
+                    com.luxwatch.gadget.ui.PictureScreen(shown.first, shown.second, onClose = ::closePicture)
+                } else if (token != null) {
                     TokenScreen(
                         token,
                         TokenActions(
@@ -302,6 +328,7 @@ class MainActivity : ComponentActivity() {
                         paired = paired,
                         link = linkLabel(linkState),
                         tokenSet = tokenSet,
+                        tokenNeedsRepair = tokenNeedsRepair,
                         haptics = hapticsOn,
                         version = appVersion,
                         volume = volume,
@@ -309,6 +336,8 @@ class MainActivity : ComponentActivity() {
                         avatarName = avatar?.name ?: "",
                         canChangeAvatar = avatars.size > 1,
                         museMessages = museMessages,
+                        ownChat = ownChat,
+                        liveCalls = liveCalls,
                         voice = voiceLabel,
                         speechRate = speechRate,
                     ),
@@ -330,6 +359,14 @@ class MainActivity : ComponentActivity() {
                             speechRate = tts.rate
                             sampleVoice()
                         },
+                        onLiveCalls = { on ->
+                            liveCalls = on
+                            prefs.edit().putBoolean(PREF_LIVE_CALLS, on).apply()
+                        },
+                        onOwnChat = { on ->
+                            storage.ownChat = on
+                            ownChat = on
+                        },
                         onMuseMessages = { on ->
                             museMessages = on
                             LuxRuntime.setStayConnected(this, on)
@@ -340,7 +377,7 @@ class MainActivity : ComponentActivity() {
                             prefs.edit().putString("avatar", next.name).apply()
                         },
                     ),
-                    level = { capture?.level ?: 0f },
+                    level = { capture?.level ?: luxCall?.level ?: 0f },
                     happyAt = { happyAt },
                     onTap = ::onTap,
                     showTalk = showTalk,
@@ -366,6 +403,7 @@ class MainActivity : ComponentActivity() {
         LuxRuntime.warmUp(this)
         readVolume()
         LuxRuntime.onMessage = messageListener
+        LuxRuntime.onImage = imageListener
         LuxRuntime.onAvatarsChanged = avatarsListener
         avatarsListener()
         val log = LuxRuntime.history(this)
@@ -392,7 +430,8 @@ class MainActivity : ComponentActivity() {
 
     /** Lets the voice or speed just chosen be heard (only when Lux isn't busy). */
     private fun sampleVoice() {
-        if (status != TalkStatus.IDLE) return
+        // Muse's voice can only be heard in a reply.
+        if (status != TalkStatus.IDLE || tts.museVoice) return
         scope.launch { tts.speak("Hi, this is how I sound.") }
     }
 
@@ -445,12 +484,34 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         if (LuxRuntime.onMessage === messageListener) LuxRuntime.onMessage = null
+        if (LuxRuntime.onImage === imageListener) LuxRuntime.onImage = null
         if (LuxRuntime.onAvatarsChanged === avatarsListener) LuxRuntime.onAvatarsChanged = null
         val log = LuxRuntime.history(this)
         if (log.onChange === historyListener) log.onChange = null
     }
 
     private val messageListener: (String, String, Boolean) -> Boolean = ::showMuseMessage
+
+    private val imageListener: (android.graphics.Bitmap, String?) -> Boolean = { bitmap, caption ->
+        if (tokenUi != null) {
+            false // busy with the token screen: it goes to a notification
+        } else {
+            returnToFace?.cancel()
+            picture = bitmap.asImageBitmap() to caption
+            haptics.reply()
+            clearPicture?.cancel()
+            clearPicture = scope.launch {
+                delay(PICTURE_SHOW_MS)
+                picture = null
+            }
+            true
+        }
+    }
+
+    private fun closePicture() {
+        clearPicture?.cancel()
+        picture = null
+    }
 
     /** A message from Muse while Lux is on screen: show it as Lux's reply, and speak it. */
     private fun showMuseMessage(title: String, text: String, speak: Boolean): Boolean {
@@ -478,6 +539,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         closeTokenScreen() // stop advertising when the watch goes dark
+        hangUp()
         LuxRuntime.markUsed() // a talk just now: the next wrist raise warms up
         LuxRuntime.coolDown(this)
     }
@@ -535,14 +597,19 @@ class MainActivity : ComponentActivity() {
         val prompt = when {
             error != null -> error!!
             !paired -> "Not paired yet"
+            inCall && status == TalkStatus.THINKING -> "Calling Muse\u2026"
+            inCall && status == TalkStatus.SPEAKING -> "Tap to interrupt"
+            inCall -> "On a call \u00b7 tap to hang up"
             status == TalkStatus.LISTENING -> "Listening\u2026"
             status == TalkStatus.THINKING -> heard?.let { "\u201c$it\u201d" } ?: "Thinking\u2026"
             link is GadgetConnection.State.Connecting -> "Connecting to Muse\u2026"
             link is GadgetConnection.State.Failed -> "Muse offline \u2014 swipe for settings"
+            liveCalls -> "Tap to call Muse"
             else -> "Tap to talk"
         }
         val notes = if (paired) emptyList() else listOfNotNull(unpairedNote, "Add me in the Muse app", tokenNote, pairingError)
-        val showReply = error == null && status != TalkStatus.LISTENING && status != TalkStatus.THINKING
+        // On a call, Muse's words show as it says them.
+        val showReply = error == null && (inCall || (status != TalkStatus.LISTENING && status != TalkStatus.THINKING))
         return TalkUi(
             mode = mode,
             prompt = prompt,
@@ -556,6 +623,9 @@ class MainActivity : ComponentActivity() {
         returnToFace?.cancel()
         when {
             !paired -> if (pairingServer == null) requestPairing()
+            inCall && status == TalkStatus.SPEAKING -> luxCall?.interrupt()
+            inCall -> hangUp()
+            status == TalkStatus.IDLE && liveCalls -> startCall()
             status == TalkStatus.IDLE -> startListening()
             status == TalkStatus.LISTENING -> stopListeningAndSend()
             status == TalkStatus.SPEAKING -> backend.stopSpeaking()
@@ -564,6 +634,58 @@ class MainActivity : ComponentActivity() {
                 status = TalkStatus.IDLE
             }
         }
+    }
+
+    /** Settings → Live calls: a realtime call with Muse, in its own voice; tap to hang up. */
+    private fun startCall() {
+        if (callJob != null) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        clearMessages()
+        inCall = true
+        status = TalkStatus.THINKING
+        haptics.listen()
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val call = LuxCall(connection, object : com.luxwatch.gadget.noise.VoiceCall.Listener {
+            override fun onReady() = runOnUiThread { if (inCall) status = TalkStatus.LISTENING }
+            override fun onHeld(held: Boolean) = runOnUiThread {
+                if (inCall) status = if (held) TalkStatus.THINKING else TalkStatus.LISTENING
+            }
+            override fun onSpeaking(speaking: Boolean) = runOnUiThread {
+                if (inCall) status = if (speaking) TalkStatus.SPEAKING else TalkStatus.LISTENING
+            }
+            override fun onCaption(you: Boolean, text: String) = runOnUiThread {
+                if (you) heard = text else reply = text
+            }
+        })
+        luxCall = call
+        callJob = scope.launch {
+            val ended = try {
+                call.run()
+            } catch (e: CancellationException) {
+                "hung_up"
+            } catch (e: Exception) {
+                showError(if (e is IllegalStateException) e.message ?: "Call failed" else "Call failed")
+                null
+            }
+            inCall = false
+            luxCall = null
+            callJob = null
+            status = TalkStatus.IDLE
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            haptics.send()
+            reply?.let { LuxRuntime.history(this@MainActivity).add(ConversationLog.Entry(System.currentTimeMillis(), heard, it)) }
+            if (ended == "idle_timeout") showError("Call ended: nobody talking")
+            scheduleReturnToFace()
+        }
+    }
+
+    private fun hangUp() {
+        callJob?.cancel()
     }
 
     private fun startListening() {
@@ -772,8 +894,9 @@ class MainActivity : ComponentActivity() {
         val token = intent?.getStringExtra(EXTRA_SDK_TOKEN)?.trim()?.takeIf { debuggable }
         intent?.removeExtra(EXTRA_SDK_TOKEN)
         tokenSet = storage.sdkToken != null
+        tokenNeedsRepair = storage.sdkTokenNeedsRepair
         if (token == null) {
-            tokenNote = if (tokenSet) "SDK token set" else "No SDK token: Settings \u2192 SDK token"
+            tokenNote = if (tokenSet) "SDK token set" else "First set your SDK token: Settings \u2192 SDK token"
             return
         }
         if (!SdkToken.isValid(token)) {
@@ -787,12 +910,10 @@ class MainActivity : ComponentActivity() {
     private fun applySdkToken(token: String) {
         storage.sdkToken = token
         tokenSet = true
-        tokenNote = "SDK token saved"
-        connection.sdkTokenChanged()
-        if (connection.isPaired) {
-            // Report it to Muse now (one refresh, like the SDK on start).
-            connectToMuse()
-        } else if (pairingServer != null) {
+        tokenNeedsRepair = storage.sdkTokenNeedsRepair
+        // Muse records the token only when the watch pairs.
+        tokenNote = if (tokenNeedsRepair) "Token saved: pair again to use it" else "SDK token saved"
+        if (!connection.isPaired && pairingServer != null) {
             // Restart advertising so pairing_confirmed carries the token.
             pairingServer?.stop()
             pairingServer = null
@@ -817,6 +938,7 @@ class MainActivity : ComponentActivity() {
     private fun startPairingServer() {
         if (pairingServer != null) return
         pairingError = null
+        val sentToken = storage.sdkToken
         try {
             pairingServer = BlePairingServer(
                 context = this,
@@ -824,7 +946,7 @@ class MainActivity : ComponentActivity() {
                 nodeId = storage.nodeId,
                 deviceId = storage.deviceId,
                 mac = storage.mac,
-                sdkToken = storage.sdkToken, // sent in the encrypted pairing_confirmed status
+                sdkToken = sentToken, // sent in the encrypted pairing_confirmed status
                 callbacks = object : BlePairingServer.PairingCallbacks {
                     override fun onProvisioned(
                         accessToken: String,
@@ -837,11 +959,12 @@ class MainActivity : ComponentActivity() {
                     ) {
                         storage.savePairing(
                             accessToken, refreshToken, tokenType,
-                            username, apiUrl, apiUrlV2, noiseHost,
+                            username, apiUrl, apiUrlV2, noiseHost, sentToken,
                         )
                         scope.launch {
                             pairingError = null
                             unpairedNote = null
+                            tokenNeedsRepair = storage.sdkTokenNeedsRepair
                             paired = true
                             connectToMuse()
                             // handleProvision sends auth_ok after this callback returns;

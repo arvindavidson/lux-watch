@@ -128,8 +128,10 @@ Get a token at **gadgets.muse.ai/settings/sdk-tokens**. Then one of:
 
 The watch checks the format, stores it encrypted, and shows **SDK token
 saved**. Like Meta's SDK it is sent inside the encrypted `pairing_confirmed`
-BLE status and in one token refresh per app start; it is never used as a
-Bearer token and never logged. It survives unpairing. Keep the token private:
+BLE status, and Muse records it only then: **set the token before pairing**.
+A token changed after pairing takes effect once you pair again (Settings →
+Re-pair watch); Settings → SDK token says so. It is never used as a Bearer
+token and never logged. It survives unpairing. Keep the token private:
 don't commit it or paste it into chats.
 
 ## Troubleshooting

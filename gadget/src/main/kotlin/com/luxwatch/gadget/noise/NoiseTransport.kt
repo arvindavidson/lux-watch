@@ -67,10 +67,12 @@ class NoiseTransport(
 
     /**
      * Opens wss://{noiseHost}/v1/noise?vm_id={vmId} with the VM auth token
-     * and runs the Noise XX handshake. Suspends until ready.
+     * and runs the Noise XX handshake. Suspends until ready. [appId] goes on
+     * the upgrade for a voice-call connection (link_client.py noise_url): the
+     * voice app is fixed for the whole connection.
      */
-    suspend fun connect(noiseHost: String, vmId: String, vmAuthToken: String) {
-        val url = "wss://$noiseHost/v1/noise?vm_id=" + encode(vmId)
+    suspend fun connect(noiseHost: String, vmId: String, vmAuthToken: String, appId: String? = null) {
+        val url = "wss://$noiseHost/v1/noise?vm_id=" + encode(vmId) + (appId?.let { "&app_id=" + encode(it) } ?: "")
         val req = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $vmAuthToken")

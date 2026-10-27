@@ -71,6 +71,8 @@ data class SettingsUi(
     val paired: Boolean,
     val link: String,
     val tokenSet: Boolean,
+    /** Changed since pairing: Muse uses it only after the watch pairs again. */
+    val tokenNeedsRepair: Boolean = false,
     val haptics: Boolean,
     val version: String,
     /** Media volume now and its maximum. */
@@ -83,6 +85,10 @@ data class SettingsUi(
     /** Stay connected so Muse can send messages (watch.notify). */
     val museMessages: Boolean = false,
     val canChangeAvatar: Boolean = false,
+    /** The watch's talks have their own chat in Muse. */
+    val ownChat: Boolean = false,
+    /** Tapping Lux starts a realtime call with Muse. */
+    val liveCalls: Boolean = false,
 )
 
 class SettingsActions(
@@ -100,6 +106,8 @@ class SettingsActions(
     val onGetAvatar: () -> Unit = {},
     /** Switches to the next avatar in the catalog. */
     val onNextAvatar: () -> Unit = {},
+    val onOwnChat: (Boolean) -> Unit = {},
+    val onLiveCalls: (Boolean) -> Unit = {},
 )
 
 /** Three pages, swiped horizontally: talk (default), history, settings. */
@@ -425,7 +433,15 @@ fun SettingsPage(ui: SettingsUi, actions: SettingsActions) {
             Chip(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("SDK token") },
-                secondaryLabel = { Text(if (ui.tokenSet) "Set \u2014 tap to change" else "Tap to send it from your phone") },
+                secondaryLabel = {
+                    Text(
+                        when {
+                            ui.tokenNeedsRepair -> "Changed: re-pair to use it"
+                            ui.tokenSet -> "Set \u2014 tap to change"
+                            else -> "Set it before pairing"
+                        },
+                    )
+                },
                 onClick = actions.onSetToken,
                 colors = ChipDefaults.secondaryChipColors(),
             )
@@ -503,6 +519,26 @@ fun SettingsPage(ui: SettingsUi, actions: SettingsActions) {
                 label = { Text("Messages from Muse") },
                 secondaryLabel = { Text(if (ui.museMessages) "Stays connected: uses battery" else "Off: saves battery") },
                 toggleControl = { Switch(checked = ui.museMessages) },
+            )
+        }
+        item {
+            ToggleChip(
+                modifier = Modifier.fillMaxWidth(),
+                checked = ui.liveCalls,
+                onCheckedChange = actions.onLiveCalls,
+                label = { Text("Live calls (beta)") },
+                secondaryLabel = { Text(if (ui.liveCalls) "Tap Lux to call Muse" else "Off: voice messages") },
+                toggleControl = { Switch(checked = ui.liveCalls) },
+            )
+        }
+        item {
+            ToggleChip(
+                modifier = Modifier.fillMaxWidth(),
+                checked = ui.ownChat,
+                onCheckedChange = actions.onOwnChat,
+                label = { Text("Own chat in Muse") },
+                secondaryLabel = { Text(if (ui.ownChat) "Talks have their own chat" else "In your main Muse chat") },
+                toggleControl = { Switch(checked = ui.ownChat) },
             )
         }
         item {

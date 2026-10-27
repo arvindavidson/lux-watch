@@ -45,4 +45,19 @@ class AvatarLinksTest {
         assertEquals(mapOf("idle" to "https://x.example/v/clip1.mp4"), f.clips)
         assertNull(AvatarLinks.parse("Sorry, I don't have avatar clips."))
     }
+
+    @Test
+    fun readsFilePathsOnMusesComputerToo() {
+        val found = AvatarLinks.parse(
+            """
+            name: Lux
+            idle: /home/muse/avatar/connecting.mp4
+            thinking: `/home/muse/avatar/working.MP4`
+            (see https://example.com/notes.txt, and /etc/passwd isn't a clip)
+            """.trimIndent(),
+        )!!
+        assertEquals("/home/muse/avatar/connecting.mp4", found.clips["idle"])
+        assertEquals("/home/muse/avatar/working.MP4", found.clips["thinking"])
+        assertEquals(setOf("idle", "thinking"), found.clips.keys)
+    }
 }

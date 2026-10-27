@@ -12,8 +12,8 @@ android {
         applicationId = "com.luxwatch.gadget"
         minSdk = 30 // Wear OS 3.0 (Galaxy Watch 4 launched on 3)
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     buildTypes {

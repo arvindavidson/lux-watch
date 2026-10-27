@@ -89,6 +89,8 @@ class GadgetStorage(context: Context) {
         apiUrl: String,
         apiUrlV2: String?,
         noiseHost: String,
+        /** The SDK token this pairing sent (Muse records it only at pairing). */
+        sdkToken: String?,
     ) {
         prefs.edit()
             .putString("pairing_access_token", accessToken)
@@ -98,6 +100,7 @@ class GadgetStorage(context: Context) {
             .putString("pairing_api_url", apiUrl)
             .putString("pairing_api_url_v2", apiUrlV2)
             .putString("pairing_noise_host", noiseHost)
+            .putString("pairing_sdk_token_hint", tokenHint(sdkToken))
             .putLong("pairing_saved_at", System.currentTimeMillis())
             .commit() // on disk before anything else: losing these means re-pairing
     }
@@ -125,6 +128,7 @@ class GadgetStorage(context: Context) {
             .remove("pairing_api_url_v2")
             .remove("pairing_noise_host")
             .remove("pairing_saved_at")
+            .remove("pairing_sdk_token_hint")
             .apply()
     }
 
@@ -136,16 +140,39 @@ class GadgetStorage(context: Context) {
         set(value) {
             prefs.edit().apply {
                 if (value == null) remove("sdk_token") else putString("sdk_token", value)
-                remove("sdk_token_reported") // a new token needs reporting
+                remove("sdk_token_reported") // from older versions
             }.apply()
         }
 
-    /** Muse has seen the current SDK token (one successful refresh carried it). */
-    var sdkTokenReported: Boolean
-        get() = prefs.getBoolean("sdk_token_reported", false)
-        set(value) {
-            prefs.edit().putBoolean("sdk_token_reported", value).apply()
+    /**
+     * Muse records a gadget's SDK token only when it pairs (SDK e1bf614), so a
+     * token set afterwards takes effect only after pairing again. True when
+     * this pairing used a different token than the one set now. Pairings from
+     * before 0.4 didn't record theirs: never flagged.
+     */
+    val sdkTokenNeedsRepair: Boolean
+        get() {
+            if (pairing == null) return false
+            val paired = prefs.getString("pairing_sdk_token_hint", null) ?: return false
+            return paired != tokenHint(sdkToken)
         }
+
+    /**
+     * The watch's talks go to their own side chat in Muse instead of the main
+     * chat (SDK open_side_chat). Off by default: the main chat keeps Muse's
+     * context and shows the talks in the Muse app.
+     */
+    var ownChat: Boolean
+        get() = prefs.getBoolean("own_chat", false)
+        set(value) {
+            prefs.edit().putBoolean("own_chat", value).apply()
+        }
+
+    /** The side chat's id when [ownChat] is on: stable for this watch. */
+    val chatSessionId: String? get() = if (ownChat) "lux-watch-$nodeId" else null
+
+    /** The part of a token gadgets.muse.ai shows (its first 12 characters), or "none". */
+    private fun tokenHint(token: String?): String = token?.take(12) ?: "none"
 
     companion object {
         const val DEFAULT_NOISE_HOST = "hatch.metaaivm.com"

@@ -113,7 +113,8 @@ class VoiceTurnTest {
 
         // Body: the firmware's voice-note JSON around a base64 WAV.
         val body = String(t.body("/chat/stream"))
-        assertTrue(body.startsWith("{\"message\":\"\",\"output_modality\":\"text\",\"items\":[{\"type\":\"file\",\"mime_type\":\"audio/wav\",\"filename\":\"voice_note.wav\",\"data_base64\":\""))
+        // device_id (the node id) as link_client.py send_voice adds it, so Muse ties the turn to this gadget.
+        assertTrue(body.startsWith("{\"message\":\"\",\"output_modality\":\"text\",\"device_id\":\"homelink-abc123\",\"items\":[{\"type\":\"file\",\"mime_type\":\"audio/wav\",\"filename\":\"voice_note.wav\",\"data_base64\":\""))
         assertTrue(body.endsWith("\"}]}"))
         val wav = Base64.getDecoder().decode(Json.str(body, "data_base64"))
         val h = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)

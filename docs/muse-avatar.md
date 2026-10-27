@@ -80,9 +80,11 @@ in Settings → Avatar.
 
 ## Anyone's own Muse avatar, without adb or a custom APK
 
-The watch offers Muse an `avatar.set_clips` command: HTTPS links to its avatar
-clips (`idle` required; `listening`, `thinking`, `speaking`, `happy`, `error`
-optional) and a `name`. On the watch: Settings → **Get my avatar**, which asks
+The watch offers Muse an `avatar.set_clips` command: its avatar clips (`idle`
+required; `listening`, `thinking`, `speaking`, `happy`, `error` optional) and a
+`name`. Each clip is the path of a video file on Muse's computer, which the
+watch reads over its own encrypted connection (`GET /fs/raw/…` in ranges, as
+Meta's boards do for `display.draw_file`), or an HTTPS link. On the watch: Settings → **Get my avatar**, which asks
 Muse to send them, or just tell Muse "put your avatar on my watch".
 
 The watch downloads the clips before answering Muse (so bad links come back

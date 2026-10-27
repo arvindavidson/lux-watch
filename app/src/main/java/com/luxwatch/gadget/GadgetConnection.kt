@@ -5,6 +5,7 @@ import com.luxwatch.gadget.noise.CommandHandler
 import com.luxwatch.gadget.noise.CommandSpec
 import com.luxwatch.gadget.noise.MuseApi
 import com.luxwatch.gadget.noise.MuseSession
+import com.luxwatch.gadget.noise.VoiceNote
 import com.luxwatch.gadget.noise.NoiseTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -48,23 +49,6 @@ class GadgetConnection(
     /** mgst_… SDK token, sent only in refresh bodies (never as a Bearer token). */
     private val sdkToken: String? get() = storage.sdkToken
 
-    /** Like the SDK: report the SDK token with one refresh per app start. */
-    @Volatile
-    private var sdkTokenReportAttempted = false
-
-    /** A new SDK token was stored: report it on the next connect. */
-    fun sdkTokenChanged() {
-        sdkTokenReportAttempted = false
-        if (state == State.Ready) state = State.Disconnected.also { closeSession() }
-    }
-
-    private fun closeSession() {
-        session?.close()
-        transport?.close()
-        transport = null
-        session = null
-    }
-
     /** Called (on a background thread) after Muse unpairs this device and local pairing is wiped. */
     var onUnpaired: (() -> Unit)? = null
 
@@ -104,34 +88,22 @@ class GadgetConnection(
     private suspend fun connectLocked() {
         val pairing = storage.pairing ?: throw IllegalStateException("not paired")
 
-        // Rotate the device token if older than 3h, or to report the SDK token:
-        // Muse only learns it from refresh bodies until the apps forward it at
-        // mint (service.py _maybe_refresh). The SDK does that once per service
-        // start; the watch app starts far more often, and every refresh risks the
-        // pairing (a lost response leaves only a refresh token Muse has already
-        // replaced), so it's reported once per token, not per start.
+        // Rotate the device token once it's older than 3 h. Only then: Muse records
+        // the SDK token at pairing, not in refreshes (SDK e1bf614), and every
+        // refresh risks the pairing (a lost response leaves only a refresh token
+        // Muse has already replaced).
         var accessToken = pairing.accessToken
         val due = System.currentTimeMillis() - pairing.savedAt > 3 * 3600 * 1000L
-        val reportDue = sdkToken != null && !storage.sdkTokenReported && !sdkTokenReportAttempted
-        if (due || reportDue) {
-            if (reportDue) {
-                sdkTokenReportAttempted = true
-                Log.i(TAG, "refreshing device token to report the SDK token")
-            }
+        if (due) {
             try {
                 val tokens = api.refreshToken(
                     pairing.refreshToken, storage.nodeId, sdkToken, apiBase()
                 )
                 storage.updateTokens(tokens.accessToken, tokens.refreshToken)
                 accessToken = tokens.accessToken
-                if (sdkToken != null) storage.sdkTokenReported = true
                 Log.i(TAG, "device token rotated")
             } catch (e: Exception) {
-                if (!due) {
-                    // Only reporting the SDK token: nothing rejected the current
-                    // token, so a refusal here must never unpair the device.
-                    Log.w(TAG, "SDK token report refresh failed; keeping the pairing: ${e.message}")
-                } else if (e is MuseApi.ApiError && e.status == 401) {
+                if (e is MuseApi.ApiError && e.status == 401) {
                     throw PairingRevoked()
                 } else {
                     // Transient failure: keep using the current token while it works.
@@ -161,6 +133,7 @@ class GadgetConnection(
         }
         val vm = vms.firstOrNull { it.default } ?: vms.firstOrNull()
             ?: throw IllegalStateException("no VMs available")
+        currentVm = vm
 
         // Noise handshake + register.
         val t = NoiseTransport()
@@ -185,18 +158,65 @@ class GadgetConnection(
     }
 
     /** Runs a full voice turn. Ensures connection first. */
-    suspend fun voiceTurn(audio: ByteArray, onHeard: (String) -> Unit = {}, onText: (String) -> Unit = {}): String =
-        turn { it.voiceTurn(audio, AudioCapture.SAMPLE_RATE, onHeard, onText) }
+    suspend fun voiceTurn(
+        audio: ByteArray,
+        onHeard: (String) -> Unit = {},
+        onText: (String) -> Unit = {},
+        modality: String = VoiceNote.TEXT,
+        onMessageDone: (String, String) -> Unit = { _, _ -> },
+    ): String = turn { it.voiceTurn(audio, AudioCapture.SAMPLE_RATE, onHeard, onText, modality, onMessageDone) }
 
     /** Sends a typed message to Muse as a turn from this watch; returns the reply. [onText]: the reply so far. */
-    suspend fun textTurn(text: String, onText: (String) -> Unit = {}): String =
-        turn { it.textTurn(text, onText = onText) }
+    suspend fun textTurn(
+        text: String,
+        onText: (String) -> Unit = {},
+        modality: String = VoiceNote.TEXT,
+        onMessageDone: (String, String) -> Unit = { _, _ -> },
+    ): String = turn { it.textTurn(text, onText = onText, modality = modality, onMessageDone = onMessageDone) }
+
+    /** Streams Muse's spoken reply for [messageId]; false if Muse has no speech for it. */
+    suspend fun streamTts(messageId: String, onChunk: (ByteArray) -> Unit): Boolean {
+        val s = session ?: throw IllegalStateException("not connected")
+        return withContext(Dispatchers.IO) { s.streamTts(messageId, onChunk) }
+    }
+
+    @Volatile private var currentVm: MuseApi.VmEntry? = null
+
+    /**
+     * A second Noise connection to the same VM for a realtime voice call, with
+     * the voice app id on the upgrade and no link.register (SDK voice-call:
+     * a voice-only connection doesn't replace the registered one). The caller
+     * closes it.
+     */
+    suspend fun openVoiceTransport(appId: String = "hatch-web"): NoiseTransport {
+        if (!ensureConnected()) throw IllegalStateException("not connected to Muse")
+        val vm = currentVm ?: throw IllegalStateException("no VM")
+        val noiseHost = storage.pairing?.noiseHost ?: GadgetStorage.DEFAULT_NOISE_HOST
+        val t = NoiseTransport()
+        try {
+            withContext(Dispatchers.IO) { t.connect(noiseHost, vm.vmId, vm.authToken, appId) }
+        } catch (e: Exception) {
+            t.close()
+            throw e
+        }
+        return t
+    }
+
+    val nodeId: String get() = storage.nodeId
+
+    /** Reads a file from Muse's VM over this connection (see [MuseSession.readFile]). */
+    suspend fun readVmFile(path: String, maxBytes: Long): ByteArray {
+        if (!ensureConnected()) throw IllegalStateException("not connected to Muse")
+        val s = session ?: throw IllegalStateException("no session")
+        return withContext(Dispatchers.IO) { s.readFile(path, maxBytes) }
+    }
 
     private suspend fun turn(run: suspend (MuseSession) -> String): String {
         if (!ensureConnected()) {
             throw IllegalStateException("not connected: ${(state as? State.Failed)?.message}")
         }
         val s = session ?: throw IllegalStateException("no session")
+        s.chatSessionId = storage.chatSessionId
         try {
             return withContext(Dispatchers.IO) { run(s) }
         } catch (e: MuseSession.SessionError) {
