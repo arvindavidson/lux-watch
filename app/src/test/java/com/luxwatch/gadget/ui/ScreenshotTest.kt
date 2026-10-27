@@ -64,18 +64,36 @@ class ScreenshotTest {
             video = false, // Robolectric has no GPU for the TextureView
         )
 
-    @Test fun idle() = shoot("1-idle") { talk(TalkUi(AvatarMode.IDLE, "Tap to talk", null)) }
+    @Test fun idle() = shoot("1-idle") { talk(TalkUi(AvatarMode.IDLE, "Tap to talk · double-tap to call", null)) }
 
     @Test fun listening() = shoot("2-listening") {
         talk(TalkUi(AvatarMode.LISTENING, "Listening…", null), level = 0.6f)
     }
 
+    // The reply streams into the chat while Muse is still writing it.
     @Test fun thinking() = shoot("3-thinking") {
-        talk(TalkUi(AvatarMode.THINKING, "“what's the weather tomorrow”", null))
+        talk(
+            TalkUi(
+                AvatarMode.THINKING, "Thinking…", "Tomorrow looks mostly sunny",
+                chat = listOf(
+                    ChatLine(you = true, text = "what's the weather tomorrow"),
+                    ChatLine(you = false, text = "Tomorrow looks mostly sunny"),
+                ),
+            ),
+        )
     }
 
-    @Test fun speaking() = shoot("4-speaking") {
-        talk(TalkUi(AvatarMode.SPEAKING, "", "Tomorrow looks mostly sunny with a high of 18° and a light breeze in the afternoon."))
+    @Test fun speaking() = shoot("4-chat") {
+        talk(
+            TalkUi(
+                AvatarMode.IDLE, "Tap to talk · double-tap to call",
+                "Tomorrow looks mostly sunny with a high of 18° and a light breeze in the afternoon.",
+                chat = listOf(
+                    ChatLine(you = true, text = "what's the weather tomorrow"),
+                    ChatLine(you = false, text = "Tomorrow looks mostly sunny with a high of 18° and a light breeze in the afternoon."),
+                ),
+            ),
+        )
     }
 
     @Test fun error() = shoot("5-error") { talk(TalkUi(AvatarMode.ERROR, "No reply from Muse", null, isError = true)) }

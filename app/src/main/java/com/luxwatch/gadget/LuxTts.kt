@@ -45,42 +45,22 @@ class LuxTts(context: Context) {
             .sortedBy { it.name }
     }
 
-    /**
-     * Replies in Muse's own voice (a spoken reply streamed from Muse) instead
-     * of the watch's. Lux then starts speaking once each message is finished
-     * rather than at its first sentence.
-     */
-    var museVoice: Boolean
-        get() = prefs.getBoolean(PREF_MUSE_VOICE, false)
-        private set(value) {
-            prefs.edit().putBoolean(PREF_MUSE_VOICE, value).apply()
-        }
-
-    /** "Muse's voice", "Watch voice 2 of 5", or "Watch voice" before the engine is ready or with one voice. */
+    /** "2 of 5", or "Default" before the engine is ready or with a single voice. */
     val voiceLabel: String
         get() {
-            if (museVoice) return "Muse's voice"
             val all = voices()
             val i = all.indexOfFirst { it.name == tts?.voice?.name }
-            return if (all.size < 2 || i < 0) "Watch voice" else "Watch voice ${i + 1} of ${all.size}"
+            return if (all.size < 2 || i < 0) "Default" else "${i + 1} of ${all.size}"
         }
 
-    /** Muse's voice, then each of the watch's voices, then Muse's again; remembered. */
+    /** Switches to the next voice and remembers it. */
     fun nextVoice() {
         val all = voices()
+        if (all.isEmpty()) return
         val i = all.indexOfFirst { it.name == tts?.voice?.name }
-        when {
-            museVoice -> {
-                museVoice = false
-                all.firstOrNull()?.let { tts?.voice = it; prefs.edit().putString(PREF_VOICE, it.name).apply() }
-            }
-            all.isEmpty() || i == all.lastIndex -> museVoice = true
-            else -> {
-                val next = all[i + 1]
-                tts?.voice = next
-                prefs.edit().putString(PREF_VOICE, next.name).apply()
-            }
-        }
+        val next = all[(i + 1).mod(all.size)]
+        tts?.voice = next
+        prefs.edit().putString(PREF_VOICE, next.name).apply()
     }
 
     /** Speech rate, 1.0 = normal; kept between 0.6 and 2.0. */
@@ -95,7 +75,6 @@ class LuxTts(context: Context) {
     private companion object {
         const val PREF_VOICE = "tts_voice"
         const val PREF_RATE = "tts_rate"
-        const val PREF_MUSE_VOICE = "muse_voice"
     }
 
     /** Utterances queued or playing. */

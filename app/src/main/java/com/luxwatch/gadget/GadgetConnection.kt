@@ -174,11 +174,6 @@ class GadgetConnection(
         onMessageDone: (String, String) -> Unit = { _, _ -> },
     ): String = turn { it.textTurn(text, onText = onText, modality = modality, onMessageDone = onMessageDone) }
 
-    /** Streams Muse's spoken reply for [messageId]; false if Muse has no speech for it. */
-    suspend fun streamTts(messageId: String, onChunk: (ByteArray) -> Unit): Boolean {
-        val s = session ?: throw IllegalStateException("not connected")
-        return withContext(Dispatchers.IO) { s.streamTts(messageId, onChunk) }
-    }
 
     @Volatile private var currentVm: MuseApi.VmEntry? = null
 

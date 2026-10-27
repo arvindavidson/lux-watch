@@ -36,6 +36,8 @@ import com.luxwatch.gadget.avatar.AvatarPose
 import com.luxwatch.gadget.avatar.DrawStyle
 import com.luxwatch.gadget.avatar.AvatarCatalog
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -234,10 +236,28 @@ private class LuxFaceRenderer(
         // A complication tap opens the complication, not Lux.
         if (complicationSlot != null) return
         if (tapType != TapType.UP || tapEvent.yPos < bounds.top + bounds.height() * 0.36f) return
+        // One tap: a voice message. Two: a live call. A single tap waits a moment for a second.
+        val first = pendingTap
+        if (first?.isActive == true) {
+            first.cancel()
+            pendingTap = null
+            openLux(call = true)
+            return
+        }
+        pendingTap = scope.launch {
+            delay(DOUBLE_TAP_MS)
+            pendingTap = null
+            openLux(call = false)
+        }
+    }
+
+    private var pendingTap: Job? = null
+
+    private fun openLux(call: Boolean) {
         context.startActivity(
             Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(MainActivity.EXTRA_TALK, true)
+                .putExtra(if (call) MainActivity.EXTRA_CALL else MainActivity.EXTRA_TALK, true)
                 .putExtra(MainActivity.EXTRA_FROM_FACE, true),
         )
     }
@@ -246,5 +266,7 @@ private class LuxFaceRenderer(
         const val FRAME_MS = 66L // ~15 fps while animating
         const val STILL_FRAME_MS = 60_000L // the clock shows minutes; messages nudge it sooner
         const val CELEBRATE_MS = 8_000L
+        /** The system's double-tap window. */
+        val DOUBLE_TAP_MS = android.view.ViewConfiguration.getDoubleTapTimeout().toLong()
     }
 }

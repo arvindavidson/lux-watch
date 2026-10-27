@@ -21,6 +21,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.background
+import kotlinx.coroutines.launch
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -59,12 +64,17 @@ data class TalkUi(
     val mode: AvatarMode,
     /** Short status under the avatar ("Tap to talk", "Listening…", an error…). */
     val prompt: String,
-    /** Lux's reply, paged through at reading pace; null when there is none. */
+    /** Lux's reply (also in [chat]); null when there is none. */
     val reply: String?,
     /** Extra small lines (pairing / token notes) shown while unpaired. */
     val notes: List<String> = emptyList(),
     val isError: Boolean = false,
+    /** This visit's conversation, oldest first; empty shows Lux large with the prompt. */
+    val chat: List<ChatLine> = emptyList(),
 )
+
+/** A line of the talk page's chat: what you said, or Lux's reply ([from]: a message from Muse). */
+data class ChatLine(val you: Boolean, val text: String, val from: String? = null)
 
 /** Everything the settings page shows. */
 data class SettingsUi(
@@ -87,8 +97,8 @@ data class SettingsUi(
     val canChangeAvatar: Boolean = false,
     /** The watch's talks have their own chat in Muse. */
     val ownChat: Boolean = false,
-    /** Tapping Lux starts a realtime call with Muse. */
-    val liveCalls: Boolean = false,
+    /** Replies to voice messages are read out (else only shown). */
+    val readAloud: Boolean = false,
 )
 
 class SettingsActions(
@@ -107,7 +117,7 @@ class SettingsActions(
     /** Switches to the next avatar in the catalog. */
     val onNextAvatar: () -> Unit = {},
     val onOwnChat: (Boolean) -> Unit = {},
-    val onLiveCalls: (Boolean) -> Unit = {},
+    val onReadAloud: (Boolean) -> Unit = {},
 )
 
 /** Three pages, swiped horizontally: talk (default), history, settings. */
@@ -121,6 +131,8 @@ fun LuxApp(
     level: () -> Float,
     happyAt: () -> Long,
     onTap: () -> Unit,
+    /** A double tap on Lux (a live call); null when only single taps count, so they act at once. */
+    onDoubleTap: (() -> Unit)? = null,
     /** Changes whenever the talk page should come to the front. */
     showTalk: Int = 0,
     /** Bezel while Lux speaks: +1 louder, -1 quieter. */
@@ -145,6 +157,7 @@ fun LuxApp(
                     0 -> TalkPage(
                         talk, level, happyAt, onTap, avatar, onVolume, onReading,
                         volume = settings.volume, maxVolume = settings.maxVolume, volumeShownAt = volumeShownAt,
+                        onDoubleTap = onDoubleTap,
                     )
                     1 -> HistoryPage(history, onClearHistory)
                     else -> SettingsPage(settings, actions)
@@ -179,6 +192,7 @@ fun TalkPage(
     volumeShownAt: Long = 0L,
     /** Hardware video for Lux's clips; screenshot tests turn it off (no GPU). */
     video: Boolean = true,
+    onDoubleTap: (() -> Unit)? = null,
 ) {
     var showVolume by remember { mutableStateOf(false) }
     LaunchedEffect(volumeShownAt) {
@@ -186,19 +200,6 @@ fun TalkPage(
             showVolume = true
             delay(1_500)
             showVolume = false
-        }
-    }
-    // A long reply goes page by page: on its own at reading pace, or with the bezel.
-    // It grows while Muse is still writing it: same reply (same start), same page.
-    val replyKey = ui.reply?.take(24)
-    val pages = remember(ui.reply) { ui.reply?.let { paginate(it, maxChars = 72) } ?: emptyList() }
-    var page by remember(replyKey) { mutableStateOf(0) }
-    var turnedByHand by remember(replyKey) { mutableStateOf(false) }
-    if (page > pages.lastIndex) page = maxOf(0, pages.lastIndex)
-    LaunchedEffect(replyKey, turnedByHand, pages.size) {
-        while (!turnedByHand && page < pages.size - 1) {
-            delay(maxOf(2_200L, pages[page].length * 1000L / 15)) // ~15 chars/s
-            page++
         }
     }
     // Battery: Lux moves only while it's doing something, or celebrating a reply.
@@ -213,24 +214,36 @@ fun TalkPage(
         celebrating = false
     }
     val animate = ui.mode in LIVELY || celebrating
+    val chatting = ui.chat.isNotEmpty()
+    val list = rememberScalingLazyListState()
+    val scope = rememberCoroutineScope()
+    // Follow the conversation as it grows, unless the user scrolled back a moment ago.
+    var scrolledAt by remember { mutableStateOf(0L) }
+    val lastText = ui.chat.lastOrNull()?.text?.length ?: 0
+    LaunchedEffect(ui.chat.size, lastText) {
+        if (chatting && android.os.SystemClock.elapsedRealtime() - scrolledAt > FOLLOW_AFTER_SCROLL_MS) {
+            list.animateScrollToItem(ui.chat.size) // the last line (item 0 is Lux)
+        }
+    }
     var spin by remember { mutableStateOf(0f) }
     val focus = rememberActiveFocusRequester()
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .pointerInput(Unit) { detectTapGestures(onTap = { onTap() }) }
+            .pointerInput(onDoubleTap != null) {
+                detectTapGestures(onDoubleTap = onDoubleTap?.let { call -> { call() } }, onTap = { onTap() })
+            }
             .onRotaryScrollEvent { e ->
-                spin += e.verticalScrollPixels
-                if (kotlin.math.abs(spin) >= BEZEL_STEP_PX) {
-                    val step = if (spin > 0) 1 else -1
-                    spin = 0f
-                    // Pages of a long reply being read; volume otherwise (and while Lux speaks).
-                    if (pages.size > 1 && ui.mode != AvatarMode.SPEAKING) {
-                        turnedByHand = true
-                        page = (page + step).coerceIn(0, pages.size - 1)
-                        onReading()
-                    } else {
-                        onVolume(step)
+                // The bezel reads the conversation; while Lux speaks it sets the volume.
+                if (chatting && ui.mode != AvatarMode.SPEAKING) {
+                    scrolledAt = android.os.SystemClock.elapsedRealtime()
+                    scope.launch { list.scrollBy(e.verticalScrollPixels) }
+                    onReading()
+                } else {
+                    spin += e.verticalScrollPixels
+                    if (kotlin.math.abs(spin) >= BEZEL_STEP_PX) {
+                        onVolume(if (spin > 0) 1 else -1)
+                        spin = 0f
                     }
                 }
                 true
@@ -239,35 +252,39 @@ fun TalkPage(
             .focusable(),
         contentAlignment = Alignment.Center,
     ) {
-        // Make room on the round screen when there's text to read.
-        val hasText = ui.reply != null || ui.notes.isNotEmpty()
-        val avatarSize = minOf(maxWidth, maxHeight) * (if (hasText) 0.44f else 0.58f)
         val accent = Color(avatar.accent(ui.mode))
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 26.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            AvatarView(avatar, ui.mode, level, happyAt, Modifier.size(avatarSize), animate = animate, video = video)
-            Spacer(Modifier.height(4.dp))
-            if (ui.reply != null) {
-                ReplyCaption(pages.getOrElse(page) { "" })
-                if (pages.size > 1) {
-                    Text(
-                        "${page + 1}/${pages.size}",
-                        style = MaterialTheme.typography.caption3,
-                        color = MaterialTheme.colors.onSurfaceVariant,
-                    )
+        val side = minOf(maxWidth, maxHeight)
+        if (chatting) {
+            ScalingLazyColumn(
+                state = list,
+                modifier = Modifier.fillMaxSize(),
+                autoCentering = null,
+                // Inset from the round edge, more at the bottom where the circle narrows.
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 22.dp, end = 22.dp, top = 18.dp, bottom = 48.dp,
+                ),
+            ) {
+                item {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AvatarView(
+                            avatar, ui.mode, level, happyAt, Modifier.size(side * 0.3f),
+                            animate = animate, video = video,
+                        )
+                        Prompt(ui, accent)
+                    }
                 }
-            } else {
-                Text(
-                    ui.prompt,
-                    style = MaterialTheme.typography.caption1,
-                    color = if (ui.isError) accent else MaterialTheme.colors.onBackground,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                for (line in ui.chat) item { ChatBubble(line, accent) }
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 26.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                val avatarSize = side * (if (ui.notes.isNotEmpty()) 0.44f else 0.58f)
+                AvatarView(avatar, ui.mode, level, happyAt, Modifier.size(avatarSize), animate = animate, video = video)
+                Spacer(Modifier.height(4.dp))
+                Prompt(ui, accent)
                 for (note in ui.notes) {
                     Text(
                         note,
@@ -301,6 +318,39 @@ fun TalkPage(
     }
 }
 
+@Composable
+private fun Prompt(ui: TalkUi, accent: Color) {
+    Text(
+        ui.prompt,
+        style = MaterialTheme.typography.caption1,
+        color = if (ui.isError) accent else MaterialTheme.colors.onBackground,
+        textAlign = TextAlign.Center,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** One line of the conversation: yours on the right, Lux's (or a message from Muse) on the left. */
+@Composable
+private fun ChatBubble(line: ChatLine, accent: Color) {
+    Box(
+        Modifier.fillMaxWidth().padding(start = if (line.you) 18.dp else 0.dp, end = if (line.you) 0.dp else 18.dp),
+        contentAlignment = if (line.you) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Text(
+            if (line.from != null) "${line.from}: ${line.text}" else line.text,
+            style = if (line.you) MaterialTheme.typography.caption2 else MaterialTheme.typography.caption1,
+            color = if (line.you) MaterialTheme.colors.onSurfaceVariant else MaterialTheme.colors.onBackground,
+            modifier = Modifier
+                .background(
+                    if (line.you) Color(0xFF26282C) else accent.copy(alpha = 0.22f),
+                    androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                )
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+    }
+}
+
 /** States in which the avatar animates; otherwise it's a still frame. */
 private val LIVELY = setOf(AvatarMode.LISTENING, AvatarMode.THINKING, AvatarMode.SPEAKING, AvatarMode.BOOT)
 
@@ -310,34 +360,8 @@ private const val CELEBRATE_MS = 8_000L
 /** Bezel movement that counts as one step (a Galaxy bezel click, or a bit of crown turn). */
 private const val BEZEL_STEP_PX = 30f
 
-/** One page of a reply (a few short lines), like the Muse boards' caption. */
-@Composable
-fun ReplyCaption(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.caption1,
-        fontWeight = FontWeight.Medium,
-        textAlign = TextAlign.Center,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
-
-/** Splits text into word-wrapped chunks of at most [maxChars]. */
-internal fun paginate(text: String, maxChars: Int): List<String> {
-    val pages = mutableListOf<String>()
-    val current = StringBuilder()
-    for (word in text.trim().split(Regex("\\s+"))) {
-        if (current.isNotEmpty() && current.length + 1 + word.length > maxChars) {
-            pages += current.toString()
-            current.clear()
-        }
-        if (current.isNotEmpty()) current.append(' ')
-        current.append(word)
-    }
-    if (current.isNotEmpty()) pages += current.toString()
-    return pages.ifEmpty { listOf("") }
-}
+/** After the user scrolls the chat by hand, new text stops pulling it down for this long. */
+private const val FOLLOW_AFTER_SCROLL_MS = 4_000L
 
 /** Recent exchanges with Lux and messages from Muse, newest first. */
 @Composable
@@ -484,6 +508,16 @@ fun SettingsPage(ui: SettingsUi, actions: SettingsActions) {
             )
         }
         item {
+            ToggleChip(
+                modifier = Modifier.fillMaxWidth(),
+                checked = ui.readAloud,
+                onCheckedChange = actions.onReadAloud,
+                label = { Text("Read replies aloud") },
+                secondaryLabel = { Text(if (ui.readAloud) "In the voice below" else "Off: read them on screen") },
+                toggleControl = { Switch(checked = ui.readAloud) },
+            )
+        }
+        item {
             Chip(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Voice") },
@@ -519,16 +553,6 @@ fun SettingsPage(ui: SettingsUi, actions: SettingsActions) {
                 label = { Text("Messages from Muse") },
                 secondaryLabel = { Text(if (ui.museMessages) "Stays connected: uses battery" else "Off: saves battery") },
                 toggleControl = { Switch(checked = ui.museMessages) },
-            )
-        }
-        item {
-            ToggleChip(
-                modifier = Modifier.fillMaxWidth(),
-                checked = ui.liveCalls,
-                onCheckedChange = actions.onLiveCalls,
-                label = { Text("Live calls (beta)") },
-                secondaryLabel = { Text(if (ui.liveCalls) "Tap Lux to call Muse" else "Off: voice messages") },
-                toggleControl = { Switch(checked = ui.liveCalls) },
             )
         }
         item {

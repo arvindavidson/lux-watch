@@ -11,8 +11,8 @@ Lux, talk, and your Muse answers on your wrist.
 >
 > **Beta.** Talking to Muse, pairing and the watch face run on a Galaxy Watch4
 > Classic. Messages from Muse, avatar import, the face's complications, the
-> hardware video playback, sending the token from the phone, Muse's voice,
-> live calls and pictures from Muse are newer and have had little or no
+> hardware video playback, sending the token from the phone, live calls and
+> pictures from Muse are newer and have had little or no
 > testing on a watch.
 
 ## Quick start
@@ -41,7 +41,7 @@ app you need `adb` on a computer, or an adb app on the phone (below).
    watch pairs, so a token changed later needs **Re-pair watch**.
 4. In the Muse app, add a gadget: the watch shows up, and the Muse app pairs
    with it over Bluetooth.
-5. Tap Lux and talk. For the watch face: long-press your current face, swipe
+5. Tap Lux and talk (double-tap for a live call). For the watch face: long-press your current face, swipe
    to the end, tap **+** and pick **Lux**.
 
 [BUILD.md](BUILD.md) has the details, building from source and troubleshooting.
@@ -59,9 +59,10 @@ app you need `adb` on a computer, or an adb app on the phone (below).
 3. **Talk**: tap Lux (on the watch face, the tile or the complication), speak,
    and stop: it sends when you stop talking. The 16 kHz recording goes to
    `/chat/stream` as a voice note (as Meta's ESP32 boards send it); the reply
-   streams back over `/chat/subscribe` and is shown and spoken with on-device
-   TTS (Muse sends no reply audio), starting at the first finished sentence
-   while Muse is still writing the rest. From the face, Lux returns to the face after.
+   streams back over `/chat/subscribe` into a chat on the watch as Muse writes
+   it (read aloud with on-device TTS if you turn that on). Double-tap Lux for a
+   live call instead, in Muse's own voice. From the face, Lux returns to the
+   face once you've had time to read.
 4. **Muse can reach the watch**: it offers Muse commands in `link.register`
    (`watch.notify` for reminders and messages, `device.health`,
    `avatar.set_clips`, and `display.draw_file` / `display.draw_url` to show a
@@ -110,19 +111,19 @@ PASS framing.service_frame (78 bytes) / framing.chunk[0] (92 bytes)
 
 ## Features
 
-- Talk screen: tap to talk, sends when you stop speaking; replies shown and read
-  aloud; the bezel sets the volume (with a ring and a haptic tick) and pages
-  through long replies; haptics.
-- Muse's own voice (Settings → Voice): replies streamed as speech from Muse;
-  or one of the watch's voices, which start at the first sentence.
-- Live calls (Settings → Live calls, beta): tap Lux to call Muse. The mic
-  streams live and Muse answers in its voice as it thinks; tap to interrupt it,
-  tap again to hang up. A port of the SDK's realtime voice (an `mcu-wearable`
+- Talk screen: tap to talk, sends when you stop speaking; the conversation
+  shows as a chat, Muse's reply appearing as it writes it, and the bezel
+  scrolls it. Settings → Read replies aloud reads replies in the watch's voice,
+  starting at the first sentence; the bezel then sets the volume.
+- Live calls (beta): double-tap Lux, on the watch face or the talk screen, to
+  call Muse; a single tap is still a voice message. The mic streams live and
+  Muse answers in its voice as it thinks; tap to interrupt it, tap again to
+  hang up. A port of the SDK's realtime voice (an `mcu-wearable`
   call on a second Noise connection).
 - Pictures from Muse (`display.draw_file`, `display.draw_url`), full screen.
 - History page: recent exchanges and Muse's messages, kept on the watch.
 - Settings: Muse connection, SDK token (sent from the phone, or typed), Messages
-  from Muse, voice and speed, live calls, own chat in Muse (a side chat for
+  from Muse, voice and speed, own chat in Muse (a side chat for
   the watch's talks), volume, haptics, avatar, re-pair.
 - Lux watch face with complications and a Customize screen; tile; complication.
 
@@ -135,7 +136,7 @@ PASS framing.service_frame (78 bytes) / framing.chunk[0] (92 bytes)
   watch face; with another face, Android may stop it in the background.
 - Avatar import and pictures from Muse are untested on a watch: they depend on
   Muse calling the commands (or putting file paths in its reply).
-- Muse's voice, live calls and the own chat follow the SDK's October 2026
+- Live calls and the own chat follow the SDK's October 2026
   additions (realtime voice is experimental there too) and are tested only
   against fakes so far, not against Muse on a watch.
 - `noise_host` vs `vm_ws_url` domain: the pairing record is authoritative.

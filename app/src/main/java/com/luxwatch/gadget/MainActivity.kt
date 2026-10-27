@@ -27,6 +27,7 @@ import com.luxwatch.gadget.avatar.AvatarLinks
 import com.luxwatch.gadget.avatar.ClipImporter
 import com.luxwatch.gadget.noise.SdkToken
 import com.luxwatch.gadget.noise.VoiceNote
+import com.luxwatch.gadget.ui.ChatLine
 import com.luxwatch.gadget.ui.LuxApp
 import com.luxwatch.gadget.ui.SettingsActions
 import com.luxwatch.gadget.ui.SettingsUi
@@ -53,6 +54,9 @@ class MainActivity : ComponentActivity() {
         /** Start listening as soon as Lux opens (watch face, tile, complication). */
         const val EXTRA_TALK = "talk"
 
+        /** Start a live call as soon as Lux opens (a double tap on the watch face). */
+        const val EXTRA_CALL = "call"
+
         /** Opened from the Lux watch face: go back to it after the reply. */
         const val EXTRA_FROM_FACE = "from_face"
 
@@ -70,8 +74,10 @@ class MainActivity : ComponentActivity() {
         /** Muse stops listening to a voice note after 15 s, so stop and send there. */
         private const val MAX_RECORD_MS = VoiceNote.MAX_SECONDS * 1000L
         private const val ERROR_SHOW_MS = 4_000L
-        private const val REPLY_LINGER_MS = 10_000L
-        private const val PREF_LIVE_CALLS = "live_calls"
+        private const val PREF_READ_ALOUD = "read_aloud"
+        /** The longest the reading time before going back to the face gets. */
+        private const val MAX_READING_MS = 30_000L
+        private const val MAX_CHAT_LINES = 40
         /** How long a picture from Muse stays up unless tapped away. */
         private const val PICTURE_SHOW_MS = 60_000L
         /** How long Settings → SDK token waits for the phone. */
@@ -97,17 +103,30 @@ class MainActivity : ComponentActivity() {
     private var tokenNeedsRepair by mutableStateOf(false)
     private var tokenNote by mutableStateOf<String?>(null)
     private var heard by mutableStateOf<String?>(null)
+    /** Earlier lines of this visit's chat; the current turn is [heard] and [reply]. */
+    private var pastChat by mutableStateOf<List<ChatLine>>(emptyList())
+    /** Who [reply] is from when it isn't Lux's answer (a message from Muse). */
+    private var replyFrom by mutableStateOf<String?>(null)
     private var reply by mutableStateOf<String?>(null)
     private var error by mutableStateOf<String?>(null)
     private var hapticsOn by mutableStateOf(true)
     private var happyAt by mutableLongStateOf(0L)
     private var museMessages by mutableStateOf(false)
     private var ownChat by mutableStateOf(false)
-    /** Settings → Live calls: tapping Lux calls Muse instead of sending a voice message. */
-    private var liveCalls by mutableStateOf(false)
+    /** Settings → Read replies aloud: off, replies are a chat to read; calls always talk. */
+    @Volatile private var readAloudState = false
+    private var readAloud: Boolean
+        get() = readAloudState
+        set(value) {
+            readAloudState = value
+            readAloudShown = value
+        }
+    private var readAloudShown by mutableStateOf(false)
     /** A live call is on (connecting, listening or Muse speaking). */
     private var inCall by mutableStateOf(false)
     private var luxCall: LuxCall? = null
+    /** The mic permission was asked for to start a call. */
+    private var pendingCall = false
     private var callJob: Job? = null
     private var showTalk by mutableStateOf(0)
     private var history by mutableStateOf<List<ConversationLog.Entry>>(emptyList())
@@ -133,7 +152,6 @@ class MainActivity : ComponentActivity() {
     private var autoStop: Job? = null
     private var turn: Job? = null
     private var clearError: Job? = null
-    private var clearReply: Job? = null
     private var returnToFace: Job? = null
     private var fromFace = false
 
@@ -152,7 +170,8 @@ class MainActivity : ComponentActivity() {
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) showError("Microphone permission needed")
-            else if (liveCalls) startCall() else startListening()
+            else if (pendingCall) startCall() else startListening()
+            pendingCall = false
         }
 
     private val tokenInputLauncher =
@@ -277,7 +296,7 @@ class MainActivity : ComponentActivity() {
         avatars = AvatarCatalog.all(this)
         museMessages = LuxRuntime.stayConnected(this)
         ownChat = storage.ownChat
-        liveCalls = prefs.getBoolean(PREF_LIVE_CALLS, false)
+        readAloud = prefs.getBoolean(PREF_READ_ALOUD, false)
         // Muse's messages arrive as notifications while Lux isn't open.
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -292,6 +311,7 @@ class MainActivity : ComponentActivity() {
             onHeard = { h -> runOnUiThread { heard = h } },
             onReply = { r, final -> runOnUiThread { onReply(r, final) } },
             onError = { e -> runOnUiThread { showError(e) } },
+            readAloud = { readAloud },
         )
         consumeSdkTokenExtra(intent)
         linkState = connection.state
@@ -337,7 +357,7 @@ class MainActivity : ComponentActivity() {
                         canChangeAvatar = avatars.size > 1,
                         museMessages = museMessages,
                         ownChat = ownChat,
-                        liveCalls = liveCalls,
+                        readAloud = readAloudShown,
                         voice = voiceLabel,
                         speechRate = speechRate,
                     ),
@@ -359,9 +379,9 @@ class MainActivity : ComponentActivity() {
                             speechRate = tts.rate
                             sampleVoice()
                         },
-                        onLiveCalls = { on ->
-                            liveCalls = on
-                            prefs.edit().putBoolean(PREF_LIVE_CALLS, on).apply()
+                        onReadAloud = { on ->
+                            readAloud = on
+                            prefs.edit().putBoolean(PREF_READ_ALOUD, on).apply()
                         },
                         onOwnChat = { on ->
                             storage.ownChat = on
@@ -380,6 +400,8 @@ class MainActivity : ComponentActivity() {
                     level = { capture?.level ?: luxCall?.level ?: 0f },
                     happyAt = { happyAt },
                     onTap = ::onTap,
+                    // Double tap to call, only when a single tap would start a voice message.
+                    onDoubleTap = if (paired && status == TalkStatus.IDLE && !inCall) ::startCall else null,
                     showTalk = showTalk,
                     onVolume = { step ->
                         adjustVolume(if (step > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER)
@@ -421,17 +443,11 @@ class MainActivity : ComponentActivity() {
     /** The user is paging through the reply with the bezel: keep it up, and stay on Lux. */
     private fun keepReply() {
         returnToFace?.cancel()
-        clearReply?.cancel()
-        clearReply = scope.launch {
-            delay(REPLY_LINGER_MS)
-            reply = null
-        }
     }
 
     /** Lets the voice or speed just chosen be heard (only when Lux isn't busy). */
     private fun sampleVoice() {
-        // Muse's voice can only be heard in a reply.
-        if (status != TalkStatus.IDLE || tts.museVoice) return
+        if (status != TalkStatus.IDLE) return
         scope.launch { tts.speak("Hi, this is how I sound.") }
     }
 
@@ -518,10 +534,11 @@ class MainActivity : ComponentActivity() {
         if (status != TalkStatus.IDLE) return false // mid-talk: it goes to a notification
         clearMessages()
         returnToFace?.cancel()
-        reply = if (title == "Lux") text else "$title: $text"
+        reply = text
+        replyFrom = title.takeIf { it != "Lux" }
         happyAt = SystemClock.elapsedRealtime()
         haptics.reply()
-        if (speak) {
+        if (speak && readAloud) {
             scope.launch {
                 onStatus(TalkStatus.SPEAKING)
                 try {
@@ -540,6 +557,13 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         closeTokenScreen() // stop advertising when the watch goes dark
         hangUp()
+        // Lux left the screen: the next visit starts a fresh chat (History keeps the old one).
+        if (status == TalkStatus.IDLE) {
+            pastChat = emptyList()
+            reply = null
+            replyFrom = null
+            heard = null
+        }
         LuxRuntime.markUsed() // a talk just now: the next wrist raise warms up
         LuxRuntime.coolDown(this)
     }
@@ -547,11 +571,19 @@ class MainActivity : ComponentActivity() {
     /** One tap from the watch face, tile or complication: open listening. */
     private fun handleLaunch(intent: Intent) {
         if (intent.getBooleanExtra(EXTRA_FROM_FACE, false)) fromFace = true
-        if (!intent.getBooleanExtra(EXTRA_TALK, false)) return
+        val call = intent.getBooleanExtra(EXTRA_CALL, false)
+        if (!call && !intent.getBooleanExtra(EXTRA_TALK, false)) return
         intent.removeExtra(EXTRA_TALK)
+        intent.removeExtra(EXTRA_CALL)
         intent.removeExtra(EXTRA_FROM_FACE)
         if (!paired) return
         returnToFace?.cancel()
+        if (call) {
+            if (inCall) return
+            if (status == TalkStatus.SPEAKING) backend.stopSpeaking()
+            if (status == TalkStatus.IDLE || status == TalkStatus.SPEAKING) startCall()
+            return
+        }
         when (status) {
             TalkStatus.IDLE -> startListening()
             TalkStatus.SPEAKING -> {
@@ -566,8 +598,10 @@ class MainActivity : ComponentActivity() {
     private fun scheduleReturnToFace() {
         if (!fromFace) return
         returnToFace?.cancel()
+        // Time to read the reply (about 15 characters a second); scrolling or a tap keeps it up.
+        val reading = (reply?.length ?: 0) * 1000L / 15
         returnToFace = scope.launch {
-            delay(RETURN_TO_FACE_MS)
+            delay((RETURN_TO_FACE_MS + reading).coerceAtMost(MAX_READING_MS))
             if (status == TalkStatus.IDLE && capture == null) {
                 fromFace = false
                 moveTaskToBack(true)
@@ -601,21 +635,24 @@ class MainActivity : ComponentActivity() {
             inCall && status == TalkStatus.SPEAKING -> "Tap to interrupt"
             inCall -> "On a call \u00b7 tap to hang up"
             status == TalkStatus.LISTENING -> "Listening\u2026"
-            status == TalkStatus.THINKING -> heard?.let { "\u201c$it\u201d" } ?: "Thinking\u2026"
+            status == TalkStatus.THINKING -> "Thinking\u2026"
             link is GadgetConnection.State.Connecting -> "Connecting to Muse\u2026"
             link is GadgetConnection.State.Failed -> "Muse offline \u2014 swipe for settings"
-            liveCalls -> "Tap to call Muse"
-            else -> "Tap to talk"
+            else -> "Tap to talk \u00b7 double-tap to call"
         }
         val notes = if (paired) emptyList() else listOfNotNull(unpairedNote, "Add me in the Muse app", tokenNote, pairingError)
-        // On a call, Muse's words show as it says them.
-        val showReply = error == null && (inCall || (status != TalkStatus.LISTENING && status != TalkStatus.THINKING))
+        // Replies show as Muse writes them (and, on a call, as it says them).
+        val chat = pastChat + listOfNotNull(
+            heard?.let { ChatLine(you = true, text = it) },
+            reply?.let { ChatLine(you = false, text = it, from = replyFrom) },
+        )
         return TalkUi(
             mode = mode,
             prompt = prompt,
-            reply = if (showReply) reply else null,
+            reply = reply,
             notes = notes,
             isError = error != null,
+            chat = chat,
         )
     }
 
@@ -625,7 +662,6 @@ class MainActivity : ComponentActivity() {
             !paired -> if (pairingServer == null) requestPairing()
             inCall && status == TalkStatus.SPEAKING -> luxCall?.interrupt()
             inCall -> hangUp()
-            status == TalkStatus.IDLE && liveCalls -> startCall()
             status == TalkStatus.IDLE -> startListening()
             status == TalkStatus.LISTENING -> stopListeningAndSend()
             status == TalkStatus.SPEAKING -> backend.stopSpeaking()
@@ -636,12 +672,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Settings → Live calls: a realtime call with Muse, in its own voice; tap to hang up. */
+    /** A double tap: a realtime call with Muse, in its own voice; tap to interrupt or hang up. */
     private fun startCall() {
         if (callJob != null) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+            pendingCall = true
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -659,7 +696,13 @@ class MainActivity : ComponentActivity() {
                 if (inCall) status = if (speaking) TalkStatus.SPEAKING else TalkStatus.LISTENING
             }
             override fun onCaption(you: Boolean, text: String) = runOnUiThread {
-                if (you) heard = text else reply = text
+                if (you) {
+                    // A new thing said: the last exchange moves up the chat.
+                    if (reply != null) clearMessages()
+                    heard = text
+                } else {
+                    reply = text
+                }
             }
         })
         luxCall = call
@@ -778,13 +821,6 @@ class MainActivity : ComponentActivity() {
         val turnEnded = s == TalkStatus.IDLE && status != TalkStatus.IDLE
         status = s
         if (turnEnded) scheduleReturnToFace()
-        if (s == TalkStatus.IDLE && reply != null) {
-            clearReply?.cancel()
-            clearReply = scope.launch {
-                delay(REPLY_LINGER_MS)
-                reply = null
-            }
-        }
     }
 
     /** The reply so far while it streams in; [final] once, with all of it. */
@@ -809,11 +845,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Before a new turn: the last exchange moves up the chat, and the prompt
+     * and error clear. The chat itself lasts until Lux leaves the screen.
+     */
     private fun clearMessages() {
         clearError?.cancel()
-        clearReply?.cancel()
+        val lastReply = reply
+        if (heard != null || lastReply != null) {
+            pastChat = (pastChat + listOfNotNull(
+                heard?.let { ChatLine(you = true, text = it) },
+                lastReply?.let { ChatLine(you = false, text = it, from = replyFrom) },
+            )).takeLast(MAX_CHAT_LINES)
+        }
         error = null
         reply = null
+        replyFrom = null
         heard = null
     }
 
