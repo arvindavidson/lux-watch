@@ -137,7 +137,10 @@ class VoiceTurnTest {
     fun buildsTheReplyFromDeltasAndReportsTheTranscript() = runBlocking {
         val t = FakeTransport()
         val heard = mutableListOf<String>()
-        val turn = async { MuseSession(t, "n", timing = FAST).voiceTurn(ONE_SECOND) { heard += it } }
+        val streamed = mutableListOf<String>()
+        val turn = async {
+            MuseSession(t, "n", timing = FAST).voiceTurn(ONE_SECOND, onHeard = { heard += it }, onText = { streamed += it })
+        }
         t.awaitSent()
         val sub = t.stream("/chat/subscribe")!!
         sub.ch.send(subscribed())
@@ -158,6 +161,8 @@ class VoiceTurnTest {
         ))
         assertEquals("It's noon.", turn.await())
         assertEquals(listOf("what time is it"), heard)
+        // The reply streams out as it's written, before the turn ends.
+        assertEquals(listOf("It's ", "It's noon."), streamed)
     }
 
     @Test

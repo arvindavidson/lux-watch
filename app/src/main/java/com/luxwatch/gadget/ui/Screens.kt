@@ -181,10 +181,13 @@ fun TalkPage(
         }
     }
     // A long reply goes page by page: on its own at reading pace, or with the bezel.
+    // It grows while Muse is still writing it: same reply (same start), same page.
+    val replyKey = ui.reply?.take(24)
     val pages = remember(ui.reply) { ui.reply?.let { paginate(it, maxChars = 72) } ?: emptyList() }
-    var page by remember(ui.reply) { mutableStateOf(0) }
-    var turnedByHand by remember(ui.reply) { mutableStateOf(false) }
-    LaunchedEffect(ui.reply, turnedByHand) {
+    var page by remember(replyKey) { mutableStateOf(0) }
+    var turnedByHand by remember(replyKey) { mutableStateOf(false) }
+    if (page > pages.lastIndex) page = maxOf(0, pages.lastIndex)
+    LaunchedEffect(replyKey, turnedByHand, pages.size) {
         while (!turnedByHand && page < pages.size - 1) {
             delay(maxOf(2_200L, pages[page].length * 1000L / 15)) // ~15 chars/s
             page++

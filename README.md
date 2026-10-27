@@ -57,7 +57,8 @@ app you need `adb` on a computer, or an adb app on the phone (below).
    and stop: it sends when you stop talking. The 16 kHz recording goes to
    `/chat/stream` as a voice note (as Meta's ESP32 boards send it); the reply
    streams back over `/chat/subscribe` and is shown and spoken with on-device
-   TTS (Muse sends no reply audio). From the face, Lux returns to the face after.
+   TTS (Muse sends no reply audio), starting at the first finished sentence
+   while Muse is still writing the rest. From the face, Lux returns to the face after.
 4. **Muse can reach the watch**: it offers Muse commands in `link.register`
    (`watch.notify` for reminders and messages, `device.health`,
    `avatar.set_clips`) and answers `link.invoke`.

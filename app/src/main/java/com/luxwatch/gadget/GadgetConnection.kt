@@ -185,11 +185,12 @@ class GadgetConnection(
     }
 
     /** Runs a full voice turn. Ensures connection first. */
-    suspend fun voiceTurn(audio: ByteArray, onHeard: (String) -> Unit = {}): String =
-        turn { it.voiceTurn(audio, AudioCapture.SAMPLE_RATE, onHeard) }
+    suspend fun voiceTurn(audio: ByteArray, onHeard: (String) -> Unit = {}, onText: (String) -> Unit = {}): String =
+        turn { it.voiceTurn(audio, AudioCapture.SAMPLE_RATE, onHeard, onText) }
 
-    /** Sends a typed message to Muse as a turn from this watch; returns the reply. */
-    suspend fun textTurn(text: String): String = turn { it.textTurn(text) }
+    /** Sends a typed message to Muse as a turn from this watch; returns the reply. [onText]: the reply so far. */
+    suspend fun textTurn(text: String, onText: (String) -> Unit = {}): String =
+        turn { it.textTurn(text, onText = onText) }
 
     private suspend fun turn(run: suspend (MuseSession) -> String): String {
         if (!ensureConnected()) {

@@ -268,7 +268,7 @@ class MainActivity : ComponentActivity() {
             connection, tts,
             onStatus = { s -> runOnUiThread { onStatus(s) } },
             onHeard = { h -> runOnUiThread { heard = h } },
-            onReply = { r -> runOnUiThread { onReply(r) } },
+            onReply = { r, final -> runOnUiThread { onReply(r, final) } },
             onError = { e -> runOnUiThread { showError(e) } },
         )
         consumeSdkTokenExtra(intent)
@@ -558,7 +558,7 @@ class MainActivity : ComponentActivity() {
             !paired -> if (pairingServer == null) requestPairing()
             status == TalkStatus.IDLE -> startListening()
             status == TalkStatus.LISTENING -> stopListeningAndSend()
-            status == TalkStatus.SPEAKING -> tts.stop()
+            status == TalkStatus.SPEAKING -> backend.stopSpeaking()
             status == TalkStatus.THINKING -> {
                 turn?.cancel()
                 status = TalkStatus.IDLE
@@ -583,6 +583,8 @@ class MainActivity : ComponentActivity() {
         clearMessages()
         status = TalkStatus.LISTENING
         haptics.listen()
+        // Connect while the user speaks, so the reply doesn't wait on it.
+        LuxRuntime.warmUp(this)
         // Send when the speaker stops (or at Muse's 15 s limit); a tap sends sooner.
         autoStop = scope.launch {
             val endpointer = Endpointer()
@@ -663,11 +665,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun onReply(text: String) {
-        LuxRuntime.history(this).add(ConversationLog.Entry(System.currentTimeMillis(), heard ?: "(voice message)", text))
+    /** The reply so far while it streams in; [final] once, with all of it. */
+    private fun onReply(text: String, final: Boolean) {
+        if (reply == null) {
+            happyAt = SystemClock.elapsedRealtime()
+            haptics.reply()
+        }
         reply = text
-        happyAt = SystemClock.elapsedRealtime()
-        haptics.reply()
+        if (final) {
+            LuxRuntime.history(this).add(ConversationLog.Entry(System.currentTimeMillis(), heard ?: "(voice message)", text))
+        }
     }
 
     private fun showError(message: String) {

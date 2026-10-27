@@ -50,6 +50,8 @@ class ReplyAssembler(private val noteId: String, private val parentId: String) {
     private val deltas = HashMap<String, StringBuilder>()
     private val deltaReplyTo = HashMap<String, String>()
     private val finished = LinkedHashMap<String, String>()
+    /** Assistant messages of the turn in the order they started. */
+    private val order = LinkedHashSet<String>()
 
     /** What Muse heard (the note's transcript), once the server has transcribed it. */
     var heard: String? = null
@@ -63,6 +65,15 @@ class ReplyAssembler(private val noteId: String, private val parentId: String) {
 
     /** All finished assistant messages of the turn, in order, joined with spaces. */
     val text: String get() = finished.values.joinToString(" ")
+
+    /**
+     * The reply so far, while Muse is still writing it: finished messages and
+     * the text streamed into unfinished ones, in order. Equals [text] once
+     * every message is done.
+     */
+    val live: String
+        get() = order.mapNotNull { id -> finished[id] ?: deltas[id]?.toString() }
+            .filter { it.isNotEmpty() }.joinToString(" ")
 
     /** Applies one row; returns true when [heard] or [text] changed. */
     fun accept(r: ChatRow): Boolean {
@@ -99,6 +110,7 @@ class ReplyAssembler(private val noteId: String, private val parentId: String) {
         val replyTo = r.replyTo.ifEmpty { deltaReplyTo[r.msg] ?: "" }
         if (!related(replyTo)) return false
         if (start || append) {
+            order += r.msg
             val sb = deltas.getOrPut(r.msg) { StringBuilder() }
             if (r.replyTo.isNotEmpty()) deltaReplyTo[r.msg] = r.replyTo
             if (append) sb.append(r.text)
@@ -109,6 +121,7 @@ class ReplyAssembler(private val noteId: String, private val parentId: String) {
         if (!done && !r.ready) return false
         val text = r.text.ifEmpty { deltas[r.msg]?.toString() ?: "" }
         if (text.isEmpty() || finished.containsKey(r.msg)) return false
+        order += r.msg
         finished[r.msg] = text
         return true
     }

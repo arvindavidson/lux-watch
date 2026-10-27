@@ -77,44 +77,76 @@ class LuxTts(context: Context) {
         const val PREF_RATE = "tts_rate"
     }
 
-    /** Speaks [text], suspending until the utterance finishes. No-op if TTS isn't ready. */
-    suspend fun speak(text: String) {
-        val engine = tts ?: return
-        if (!ready || text.isBlank()) return
+    /** Utterances queued or playing. */
+    private val pending = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val silenceWaiters = java.util.Collections.synchronizedList(ArrayList<() -> Unit>())
+
+    private val progress = object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String?) = Unit
+        override fun onDone(id: String?) = finished(id)
+
+        @Deprecated("Legacy callback; kept for older engines")
+        override fun onError(id: String?) = finished(id)
+        override fun onError(id: String?, errorCode: Int) = finished(id)
+
+        // stop() (tap to interrupt) and flushed utterances end with onStop, not onDone.
+        override fun onStop(id: String?, interrupted: Boolean) = finished(id)
+    }
+
+    private fun finished(id: String?) {
+        pending.remove(id)
+        if (pending.isEmpty()) wakeWaiters()
+    }
+
+    private fun wakeWaiters() {
+        val waiters = synchronized(silenceWaiters) { silenceWaiters.toList().also { silenceWaiters.clear() } }
+        waiters.forEach { it() }
+    }
+
+    /**
+     * Queues [text] after whatever is already being said and returns at once,
+     * so a reply can be spoken sentence by sentence while it streams in.
+     * Returns false if TTS isn't ready.
+     */
+    fun say(text: String, flush: Boolean = false): Boolean {
+        val engine = tts ?: return false
+        if (!ready || text.isBlank()) return false
+        engine.setOnUtteranceProgressListener(progress)
+        val id = UUID.randomUUID().toString()
+        if (flush) pending.clear()
+        pending += id
+        val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        if (engine.speak(text, mode, null, id) == TextToSpeech.ERROR) {
+            finished(id)
+            return false
+        }
+        return true
+    }
+
+    /** Suspends until everything queued has been said (or stopped). Cancelling stops the speech. */
+    suspend fun awaitSilence() {
+        if (pending.isEmpty()) return
         suspendCancellableCoroutine { cont ->
-            val utteranceId = UUID.randomUUID().toString()
-            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) = Unit
-                override fun onDone(id: String?) {
-                    if (id == utteranceId && cont.isActive) cont.resume(Unit)
-                }
-
-                @Deprecated("Legacy callback; kept for older engines")
-                override fun onError(id: String?) {
-                    if (id == utteranceId && cont.isActive) cont.resume(Unit)
-                }
-
-                override fun onError(id: String?, errorCode: Int) {
-                    if (id == utteranceId && cont.isActive) cont.resume(Unit)
-                }
-
-                // stop() (tap to interrupt) ends an utterance with onStop, not onDone.
-                override fun onStop(id: String?, interrupted: Boolean) {
-                    if (id == utteranceId && cont.isActive) cont.resume(Unit)
-                }
-            })
-            cont.invokeOnCancellation { engine.stop() }
-            if (engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId) ==
-                TextToSpeech.ERROR && cont.isActive
-            ) {
-                cont.resume(Unit)
+            val wake = { if (cont.isActive) cont.resume(Unit) }
+            silenceWaiters += wake
+            if (pending.isEmpty()) wake() // finished meanwhile
+            cont.invokeOnCancellation {
+                silenceWaiters -= wake
+                stop()
             }
         }
+    }
+
+    /** Speaks [text] now (replacing anything queued), suspending until it finishes. No-op if TTS isn't ready. */
+    suspend fun speak(text: String) {
+        if (say(text, flush = true)) awaitSilence()
     }
 
     /** Stops speaking now; a pending [speak] returns. */
     fun stop() {
         tts?.stop()
+        pending.clear()
+        wakeWaiters()
     }
 
     fun shutdown() {

@@ -34,11 +34,13 @@ class MuseSession(
 ) {
     /**
      * Voice-turn timeouts from Meta's firmware (muse_chat_session.cpp):
-     * REPLY_TIMEOUT_US, SETTLE_US, BUSY_HOLD_US, TURN_CAP_US.
+     * REPLY_TIMEOUT_US, SETTLE_US, BUSY_HOLD_US, TURN_CAP_US. Settle is shorter
+     * than the firmware's 3 s: the watch speaks the reply as it streams in, so
+     * the settle wait only holds the turn open for a quick follow-up message.
      */
     data class TurnTiming(
         val replyTimeoutMs: Long = 60_000,
-        val settleMs: Long = 3_000,
+        val settleMs: Long = 1_000,
         val busyHoldMs: Long = 20_000,
         val turnCapMs: Long = 180_000,
     )
@@ -190,22 +192,24 @@ class MuseSession(
     /**
      * One voice turn: sends the recording (PCM16 mono) to /chat/stream as a voice
      * note and returns Muse's text reply. [onHeard] gets the server's transcript
-     * of the note when it arrives. Follows muse_chat_link.c.
+     * of the note when it arrives; [onText] gets the reply so far each time
+     * more of it streams in. Follows muse_chat_link.c.
      */
     suspend fun voiceTurn(
         pcm: ByteArray,
         sampleRate: Int = VoiceNote.SAMPLE_RATE,
         onHeard: (String) -> Unit = {},
+        onText: (String) -> Unit = {},
     ): String {
         if (VoiceNote.durationMs(pcm, sampleRate) < VoiceNote.MIN_MS) {
             throw SessionError("didn't catch that")
         }
-        return turn(VoiceNote.body(VoiceNote.clip(pcm, sampleRate), sampleRate), onHeard)
+        return turn(VoiceNote.body(VoiceNote.clip(pcm, sampleRate), sampleRate), onHeard, onText)
     }
 
     /** A typed message, with the same reply handling as a voice turn. */
-    suspend fun textTurn(text: String, onHeard: (String) -> Unit = {}): String =
-        turn(VoiceNote.textBody(text), onHeard)
+    suspend fun textTurn(text: String, onHeard: (String) -> Unit = {}, onText: (String) -> Unit = {}): String =
+        turn(VoiceNote.textBody(text), onHeard, onText)
 
     private fun requestHeaders(accept: String) = listOf(
         "x-request-id" to "muse-%08x-%08x".format(random.nextInt(), random.nextInt()),
@@ -214,7 +218,11 @@ class MuseSession(
         "Accept" to accept,
     )
 
-    private suspend fun turn(body: ByteArray, onHeard: (String) -> Unit): String = coroutineScope {
+    private suspend fun turn(
+        body: ByteArray,
+        onHeard: (String) -> Unit,
+        onText: (String) -> Unit,
+    ): String = coroutineScope {
         val (noteId, noteCh) = transport.openStream("POST", "/chat/stream", requestHeaders("application/json"))
         val parts = (0 until body.size step BODY_CHUNK).map { body.copyOfRange(it, minOf(it + BODY_CHUNK, body.size)) }
         for (part in parts.dropLast(1)) transport.sendBodyChunk(noteId, part, endBody = false)
@@ -262,8 +270,10 @@ class MuseSession(
                     }
                     val row = ChatRow.parse(next.getOrThrow()) ?: continue
                     val heardBefore = reply.heard
+                    val liveBefore = reply.live
                     reply.accept(row)
                     reply.heard?.let { if (it != heardBefore) onHeard(it) }
+                    reply.live.let { if (it != liveBefore && it.isNotEmpty()) onText(it) }
                 }
             }
             if (!reply.replied) throw SessionError("no reply from Muse")
