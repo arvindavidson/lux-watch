@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.wear.compose.material.MaterialTheme
@@ -144,5 +145,38 @@ class ScreenshotTest {
 
     @Test fun tokenConfirm() = shoot("11-token-confirm") {
         TokenScreen(TokenUi(TokenUi.Stage.CONFIRM, tail = "k8Qw"), tokenActions)
+    }
+
+    // A live call: Muse talking, both sides' words in the chat.
+    @Test fun call() = shoot("12-call") {
+        talk(
+            TalkUi(
+                AvatarMode.SPEAKING, "Tap to interrupt", "About seven minutes for a jammy yolk, then straight into cold water.",
+                chat = listOf(
+                    ChatLine(you = true, text = "how long do I boil an egg"),
+                    ChatLine(you = false, text = "About seven minutes for a jammy yolk, then straight into cold water."),
+                ),
+            ),
+        )
+    }
+
+    /** A picture Muse sent (display.draw_file): a synthetic sunset. */
+    @Test fun picture() = shoot("13-picture") {
+        val size = 450
+        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        paint.shader = android.graphics.LinearGradient(
+            0f, 0f, 0f, size.toFloat(),
+            intArrayOf(0xFF1B1F4A.toInt(), 0xFFB8466B.toInt(), 0xFFF29E4C.toInt()), null,
+            android.graphics.Shader.TileMode.CLAMP,
+        )
+        c.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+        paint.shader = null
+        paint.color = 0xFFFFD27A.toInt()
+        c.drawCircle(size / 2f, size * 0.62f, size * 0.13f, paint)
+        paint.color = 0xFF14162B.toInt()
+        c.drawRect(0f, size * 0.7f, size.toFloat(), size.toFloat(), paint)
+        PictureScreen(bitmap.asImageBitmap(), "Tonight's sunset: 6:12 pm") {}
     }
 }
